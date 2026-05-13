@@ -271,7 +271,14 @@ write_files:
         touch "$sentinel"
         exit 0
       fi
-      # If repo is uninitialized, also skip — nothing to restore.
+      # If repo is uninitialized, init it now (first-ever boot path).
+      if ! /usr/local/bin/devbox-restic cat config >/dev/null 2>&1; then
+        echo "initializing restic repository"
+        /usr/local/bin/devbox-restic init
+        touch "$sentinel"
+        exit 0
+      fi
+      # Repo exists but no snapshots — nothing to restore.
       if ! /usr/local/bin/devbox-restic snapshots --last 1 >/dev/null 2>&1; then
         echo "no restic snapshots found, skipping restore"
         touch "$sentinel"
