@@ -1,6 +1,6 @@
 # Terraform
 terraform/.terraform/
-terraform/.terraform.lock.hcl
+# Note: .terraform.lock.hcl IS committed (provider version pinning)
 terraform/*.tfstate
 terraform/*.tfstate.*
 terraform/*.tfstate.backup

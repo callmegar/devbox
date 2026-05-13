@@ -1,7 +1,8 @@
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
 
-TF := terraform -chdir=terraform
+TF_BIN ?= tofu
+TF := $(TF_BIN) -chdir=terraform
 
 # AWS region is needed for aws-cli operations against the running instance.
 # It's also a terraform variable; resolved from .env or .tfvars.

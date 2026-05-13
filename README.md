@@ -45,7 +45,8 @@ Files in the placeholder dirs will be added in subsequent passes; the infrastruc
 One-time prerequisites on your laptop:
 
 ```bash
-# 0. Install: terraform >= 1.6, awscli v2
+# 0. Install: opentofu (tofu) >= 1.6 or terraform >= 1.6, awscli v2
+#    The Makefile uses `tofu` by default. Override with: make TF_BIN=terraform ...
 # 1. Configure AWS credentials (`aws configure`) for the account/region you'll use.
 # 2. Create an AWS EC2 key pair (or reuse one): the key_name must already exist.
 
