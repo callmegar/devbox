@@ -1,0 +1,353 @@
+#cloud-config
+#
+# Devbox cloud-init.
+#
+# Two template variables are injected by Terraform at apply time:
+#   $${backup_bucket} — S3 bucket holding restic state
+#   $${aws_region}    — region the box runs in
+#
+# All other configuration lives in the scripts below so it can be re-run by
+# hand on the box (e.g., `sudo /opt/devbox/setup.sh install-tools`).
+
+package_update: true
+package_upgrade: false   # skip upgrade on first boot — keeps bring-up fast
+
+packages:
+  - git
+  - curl
+  - jq
+  - unzip
+  - ca-certificates
+  - gnupg
+  - lsb-release
+  - software-properties-common
+  - build-essential
+  - htop
+  - tmux
+  - zsh
+  - rsync
+  - restic
+  - postgresql-client
+  - sqlite3
+  - pkg-config
+
+write_files:
+  # -- Environment shared by all setup scripts ---------------------------------
+  - path: /opt/devbox/env
+    permissions: "0644"
+    content: |
+      # Sourced by setup scripts. Safe to commit — no secrets.
+      export BACKUP_BUCKET="${backup_bucket}"
+      export AWS_REGION="${aws_region}"
+      export AWS_DEFAULT_REGION="${aws_region}"
+      export DATA_DEV="/dev/nvme1n1"
+      export DATA_MOUNT="/data"
+      export DEVBOX_USER="ubuntu"
+
+  # -- Orchestrator -----------------------------------------------------------
+  - path: /opt/devbox/setup.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # Usage:
+      #   setup.sh                      # full provisioning (first-boot path)
+      #   setup.sh <step>               # one step (idempotent)
+      # Steps run in this order on first boot:
+      set -euo pipefail
+      source /opt/devbox/env
+      STEPS=(mount-data install-docker install-node install-python install-terraform install-restic install-sourcegraph setup-user restic-restore enable-services)
+      log() { echo "[setup $(date -Iseconds)] $*"; }
+      run_step() {
+        local step="$1"
+        local script="/opt/devbox/scripts/$step.sh"
+        [[ -x "$script" ]] || { log "skip $step (no script)"; return 0; }
+        log "==> $step"
+        "$script"
+      }
+      if [[ $# -eq 0 ]]; then
+        for s in "$${STEPS[@]}"; do run_step "$s"; done
+        log "first-boot provisioning complete"
+      else
+        run_step "$1"
+      fi
+
+  # -- Step: mount data volume ------------------------------------------------
+  - path: /opt/devbox/scripts/mount-data.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      source /opt/devbox/env
+      # Wait up to 60s for the attached EBS volume to appear as a block device.
+      for i in $(seq 1 60); do
+        [[ -b "$DATA_DEV" ]] && break
+        sleep 1
+      done
+      [[ -b "$DATA_DEV" ]] || { echo "data volume $DATA_DEV never appeared"; exit 1; }
+      # Format only if blank — preserve existing data on instance replacement.
+      if ! blkid "$DATA_DEV" >/dev/null 2>&1; then
+        echo "formatting blank volume $DATA_DEV as ext4"
+        mkfs.ext4 -L devbox-data "$DATA_DEV"
+      fi
+      mkdir -p "$DATA_MOUNT"
+      grep -q "$DATA_MOUNT" /etc/fstab || \
+        echo "LABEL=devbox-data $DATA_MOUNT ext4 defaults,nofail,x-systemd.device-timeout=2min 0 2" >> /etc/fstab
+      mountpoint -q "$DATA_MOUNT" || mount "$DATA_MOUNT"
+
+  # -- Step: install Docker (official repo) ------------------------------------
+  - path: /opt/devbox/scripts/install-docker.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      source /opt/devbox/env
+      command -v docker >/dev/null && exit 0
+      install -m 0755 -d /etc/apt/keyrings
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      chmod a+r /etc/apt/keyrings/docker.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release; echo $VERSION_CODENAME) stable" \
+        > /etc/apt/sources.list.d/docker.list
+      apt-get update -y
+      apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      usermod -aG docker "$DEVBOX_USER"
+      # Point docker's data-root at the data volume so images don't fill root.
+      mkdir -p "$DATA_MOUNT/docker"
+      mkdir -p /etc/docker
+      cat > /etc/docker/daemon.json <<EOF
+      {
+        "data-root": "$DATA_MOUNT/docker",
+        "log-driver": "json-file",
+        "log-opts": {"max-size": "10m", "max-file": "3"}
+      }
+      EOF
+      systemctl enable --now docker
+
+  # -- Step: install Node.js (NodeSource 22.x LTS) -----------------------------
+  - path: /opt/devbox/scripts/install-node.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      command -v node >/dev/null && [[ "$(node -v)" == v22* ]] && exit 0
+      curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+      apt-get install -y nodejs
+      npm install -g pnpm yarn
+
+  # -- Step: install Python tooling (uv + pyenv-style) ------------------------
+  - path: /opt/devbox/scripts/install-python.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      source /opt/devbox/env
+      apt-get install -y python3 python3-venv python3-pip python3-dev
+      # uv: fast Python package + project manager (replaces pip/venv/pyenv for most flows).
+      if ! command -v uv >/dev/null; then
+        sudo -u "$DEVBOX_USER" bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
+      fi
+
+  # -- Step: install Terraform CLI --------------------------------------------
+  - path: /opt/devbox/scripts/install-terraform.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      command -v terraform >/dev/null && exit 0
+      wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+      echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+        > /etc/apt/sources.list.d/hashicorp.list
+      apt-get update -y
+      apt-get install -y terraform
+
+  # -- Step: install restic + AWS CLI v2 --------------------------------------
+  - path: /opt/devbox/scripts/install-restic.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      source /opt/devbox/env
+      # restic is already in apt packages list above; just verify.
+      command -v restic >/dev/null
+      # AWS CLI v2 (apt ships v1, which lacks newer commands).
+      if ! command -v aws >/dev/null; then
+        curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+        unzip -q /tmp/awscliv2.zip -d /tmp
+        /tmp/aws/install
+        rm -rf /tmp/aws /tmp/awscliv2.zip
+      fi
+      # Write restic env for systemd units. RESTIC_PASSWORD comes from SSM at run-time.
+      cat > /etc/restic.env <<EOF
+      RESTIC_REPOSITORY=s3:s3.$AWS_REGION.amazonaws.com/$BACKUP_BUCKET/restic
+      AWS_DEFAULT_REGION=$AWS_REGION
+      EOF
+      chmod 0644 /etc/restic.env
+      # Helper that fetches the restic password from SSM. Used by backup/restore units.
+      cat > /usr/local/bin/devbox-restic <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+      set -a; source /etc/restic.env; set +a
+      export RESTIC_PASSWORD="$(aws ssm get-parameter --name /devbox/restic-password --with-decryption --query Parameter.Value --output text)"
+      exec restic "$@"
+      EOF
+      chmod 0755 /usr/local/bin/devbox-restic
+
+  # -- Step: install Sourcegraph (single-container) ----------------------------
+  - path: /opt/devbox/scripts/install-sourcegraph.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      source /opt/devbox/env
+      mkdir -p "$DATA_MOUNT/sourcegraph/etc" "$DATA_MOUNT/sourcegraph/data"
+      chown -R "$DEVBOX_USER:$DEVBOX_USER" "$DATA_MOUNT/sourcegraph"
+      # Compose unit so the container persists across reboots and rolls back cleanly.
+      mkdir -p /opt/devbox/sourcegraph
+      cat > /opt/devbox/sourcegraph/docker-compose.yml <<EOF
+      services:
+        sourcegraph:
+          image: sourcegraph/server:5.11.0
+          container_name: sourcegraph
+          restart: unless-stopped
+          ports:
+            - "127.0.0.1:7080:7080"   # web UI, bind localhost — reach via SSH tunnel
+            - "127.0.0.1:3370:3370"   # admin
+          volumes:
+            - $DATA_MOUNT/sourcegraph/etc:/etc/sourcegraph
+            - $DATA_MOUNT/sourcegraph/data:/var/opt/sourcegraph
+      EOF
+      cat > /etc/systemd/system/sourcegraph.service <<EOF
+      [Unit]
+      Description=Sourcegraph (single-container)
+      Requires=docker.service
+      After=docker.service network-online.target
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      WorkingDirectory=/opt/devbox/sourcegraph
+      ExecStart=/usr/bin/docker compose up -d
+      ExecStop=/usr/bin/docker compose down
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+      systemctl daemon-reload
+
+  # -- Step: prepare ubuntu user's layout -------------------------------------
+  - path: /opt/devbox/scripts/setup-user.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      source /opt/devbox/env
+      # Stable user dirs live on the data volume so they survive root-volume rebuilds.
+      install -d -o "$DEVBOX_USER" -g "$DEVBOX_USER" \
+        "$DATA_MOUNT/home/repos" \
+        "$DATA_MOUNT/home/.claude" \
+        "$DATA_MOUNT/home/.config" \
+        "$DATA_MOUNT/home/.local"
+      # Symlink them into the user's home (idempotent).
+      sudo -u "$DEVBOX_USER" bash -c '
+        cd ~
+        for d in repos .claude .config .local; do
+          if [[ -e "$d" && ! -L "$d" ]]; then mv "$d" "$d.pre-devbox.$(date +%s)" || true; fi
+          ln -sfn '"$DATA_MOUNT"'/home/$d $d
+        done
+      '
+
+  # -- Step: restic restore (best-effort, first boot) -------------------------
+  - path: /opt/devbox/scripts/restic-restore.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # First-boot only: if the bucket has snapshots, restore latest into /data/home.
+      # Skipped if a sentinel file exists (avoids overwriting an already-running box).
+      set -euo pipefail
+      source /opt/devbox/env
+      sentinel="$DATA_MOUNT/.restic-restored"
+      [[ -f "$sentinel" ]] && { echo "restore sentinel present, skipping"; exit 0; }
+      # If the restic password isn't in SSM yet, this is a brand-new account.
+      if ! aws ssm get-parameter --name /devbox/restic-password --with-decryption \
+            --region "$AWS_REGION" --query Parameter.Value --output text >/dev/null 2>&1; then
+        echo "no /devbox/restic-password in SSM — assuming first-ever provisioning. Skipping restore."
+        touch "$sentinel"
+        exit 0
+      fi
+      # If repo is uninitialized, also skip — nothing to restore.
+      if ! /usr/local/bin/devbox-restic snapshots --last 1 >/dev/null 2>&1; then
+        echo "no restic snapshots found, skipping restore"
+        touch "$sentinel"
+        exit 0
+      fi
+      echo "restoring latest snapshot into $DATA_MOUNT/home"
+      /usr/local/bin/devbox-restic restore latest --target / --include "$DATA_MOUNT/home"
+      chown -R "$DEVBOX_USER:$DEVBOX_USER" "$DATA_MOUNT/home"
+      touch "$sentinel"
+
+  # -- Step: enable systemd services ------------------------------------------
+  - path: /opt/devbox/scripts/enable-services.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      systemctl daemon-reload
+      systemctl enable --now sourcegraph.service || true
+      systemctl enable --now restic-backup.timer || true
+
+  # -- restic backup systemd unit ---------------------------------------------
+  - path: /etc/systemd/system/restic-backup.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Restic backup of /data/home to S3
+      After=network-online.target
+      Wants=network-online.target
+      [Service]
+      Type=oneshot
+      Nice=10
+      IOSchedulingClass=best-effort
+      IOSchedulingPriority=7
+      ExecStart=/usr/local/bin/devbox-restic backup \
+        --tag auto \
+        --exclude-caches \
+        --exclude '/data/home/**/node_modules' \
+        --exclude '/data/home/**/.venv' \
+        --exclude '/data/home/**/__pycache__' \
+        --exclude '/data/home/**/.next' \
+        --exclude '/data/home/**/dist' \
+        --exclude '/data/home/**/build' \
+        --exclude '/data/home/**/.terraform' \
+        /data/home
+      ExecStartPost=/usr/local/bin/devbox-restic forget --keep-last 24 --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune
+
+  # -- restic backup timer ----------------------------------------------------
+  - path: /etc/systemd/system/restic-backup.timer
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Hourly devbox state backup to S3
+      [Timer]
+      OnBootSec=10min
+      OnUnitActiveSec=1h
+      Persistent=true
+      [Install]
+      WantedBy=timers.target
+
+  # -- shutdown hook: one final backup before stop ----------------------------
+  - path: /etc/systemd/system/restic-backup-shutdown.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Final restic backup before shutdown
+      DefaultDependencies=no
+      Before=shutdown.target reboot.target halt.target
+      Requires=network-online.target
+      After=network-online.target
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/devbox-restic backup --tag shutdown /data/home
+      TimeoutStartSec=10min
+      [Install]
+      WantedBy=halt.target reboot.target shutdown.target
+
+runcmd:
+  - bash -c '/opt/devbox/setup.sh 2>&1 | tee /var/log/devbox-setup.log'
+  - systemctl enable restic-backup-shutdown.service
