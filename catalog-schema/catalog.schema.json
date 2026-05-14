@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "devbox system catalog",
+  "type": "object",
+  "required": ["repo", "repo_path", "generated_at", "nodes"],
+  "properties": {
+    "repo": { "type": "string" },
+    "repo_path": { "type": "string" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "nodes": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/definitions/node" }
+    }
+  },
+  "definitions": {
+    "node": {
+      "type": "object",
+      "required": ["name", "kind", "path"],
+      "properties": {
+        "name": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": ["python_module", "frontend", "terraform_stack"]
+        },
+        "path": { "type": "string", "description": "relative to repo root" },
+        "purpose": { "type": "string", "description": "harvested from CLAUDE.md" },
+        "depends_on": { "type": "array", "items": { "type": "string" } },
+        "dependents": { "type": "array", "items": { "type": "string" } },
+        "external_deps": { "type": "array", "items": { "type": "string" } },
+        "claude_md": { "type": ["string", "null"] },
+        "loc": { "type": "integer" },
+        "extra": {
+          "type": "object",
+          "description": "kind-specific fields: has_migrations, db_schemas, ci_jobs, ci_triggers, framework, modules_used, etc."
+        }
+      }
+    }
+  }
+}

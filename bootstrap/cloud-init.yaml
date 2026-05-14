@@ -246,11 +246,12 @@ write_files:
         "$DATA_MOUNT/home/repos" \
         "$DATA_MOUNT/home/.claude" \
         "$DATA_MOUNT/home/.config" \
-        "$DATA_MOUNT/home/.local"
+        "$DATA_MOUNT/home/.local" \
+        "$DATA_MOUNT/home/.devbox"
       # Symlink them into the user's home (idempotent).
       sudo -u "$DEVBOX_USER" bash -c '
         cd ~
-        for d in repos .claude .config .local; do
+        for d in repos .claude .config .local .devbox; do
           if [[ -e "$d" && ! -L "$d" ]]; then mv "$d" "$d.pre-devbox.$(date +%s)" || true; fi
           ln -sfn '"$DATA_MOUNT"'/home/$d $d
         done
