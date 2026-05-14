@@ -44,6 +44,27 @@ set-restic-password: ## Generate a restic password and store it in SSM (idempote
 		echo "Back it up somewhere safe — losing it makes your S3 backups unrecoverable."; \
 	fi
 
+.PHONY: upload-gitlab-key
+upload-gitlab-key: KEY_FILE ?= ~/.ssh/cbakon
+upload-gitlab-key: ## Upload GitLab SSH key (private+public) to SSM under /devbox/ssh-keys/gitlab
+	@if [ ! -f $(KEY_FILE) ]; then echo "private key not found: $(KEY_FILE)"; exit 1; fi
+	@if [ ! -f $(KEY_FILE).pub ]; then echo "public key not found: $(KEY_FILE).pub"; exit 1; fi
+	@echo "Uploading $(KEY_FILE) -> /devbox/ssh-keys/gitlab (SecureString)"
+	@aws ssm put-parameter --name /devbox/ssh-keys/gitlab --type SecureString --overwrite \
+		--value "$$(cat $(KEY_FILE))" --region $(AWS_REGION) >/dev/null
+	@echo "Uploading $(KEY_FILE).pub -> /devbox/ssh-keys/gitlab.pub"
+	@aws ssm put-parameter --name /devbox/ssh-keys/gitlab.pub --type String --overwrite \
+		--value "$$(cat $(KEY_FILE).pub)" --region $(AWS_REGION) >/dev/null
+	@echo "Done. Run 'make sync-ssh-keys' to install on the running box."
+
+.PHONY: sync-ssh-keys
+sync-ssh-keys: ## Run setup-ssh-keys on the running box (pulls fresh keys from SSM)
+	@aws ssm send-command --region $(AWS_REGION) --instance-ids $(INSTANCE_ID) \
+		--document-name "AWS-RunShellScript" \
+		--parameters 'commands=["sudo /opt/devbox/setup.sh setup-ssh-keys"]' \
+		--query "Command.CommandId" --output text | xargs -I {} \
+		sh -c 'aws ssm wait command-executed --region $(AWS_REGION) --command-id {} --instance-id $(INSTANCE_ID); aws ssm get-command-invocation --region $(AWS_REGION) --command-id {} --instance-id $(INSTANCE_ID) --query StandardOutputContent --output text'
+
 # ---------- terraform lifecycle -----------------------------------------------
 
 .PHONY: init

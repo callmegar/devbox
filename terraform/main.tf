@@ -60,7 +60,9 @@ resource "aws_instance" "devbox" {
   key_name               = var.key_name
   vpc_security_group_ids = [aws_security_group.devbox.id]
   iam_instance_profile   = aws_iam_instance_profile.devbox.name
-  user_data              = local.cloud_init
+  # gzip+base64 to fit larger cloud-init (raw limit is 16 KB; gzipped limit is 64 KB).
+  # cloud-init transparently decompresses on first boot.
+  user_data_base64       = base64gzip(local.cloud_init)
   user_data_replace_on_change = false
 
   # IMDSv2 required — blocks SSRF-style metadata exfiltration.
