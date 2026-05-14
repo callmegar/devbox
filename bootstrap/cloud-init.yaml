@@ -55,7 +55,10 @@ write_files:
       # Steps run in this order on first boot:
       set -euo pipefail
       source /opt/devbox/env
-      STEPS=(mount-data install-docker install-node install-python install-terraform install-restic install-sourcegraph setup-user setup-ssh-keys restic-restore enable-services)
+      # setup-user runs early (right after mount-data) so the ~/.local, ~/.config
+      # etc. symlinks point at the data volume BEFORE any tool installs into them
+      # (e.g. uv writing to ~/.local/bin). Reordering this is load-bearing.
+      STEPS=(mount-data setup-user install-docker install-node install-python install-terraform install-restic install-sourcegraph setup-ssh-keys restic-restore enable-services)
       log() { echo "[setup $(date -Iseconds)] $*"; }
       run_step() {
         local step="$1"
