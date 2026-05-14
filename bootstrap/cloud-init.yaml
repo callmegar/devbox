@@ -205,7 +205,7 @@ write_files:
       cat > /opt/devbox/sourcegraph/docker-compose.yml <<EOF
       services:
         sourcegraph:
-          image: sourcegraph/server:5.11.0
+          image: sourcegraph/server:6.12.5040
           container_name: sourcegraph
           restart: unless-stopped
           ports:
