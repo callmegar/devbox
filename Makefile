@@ -58,12 +58,18 @@ upload-gitlab-key: ## Upload GitLab SSH key (private+public) to SSM under /devbo
 	@echo "Done. Run 'make sync-ssh-keys' to install on the running box."
 
 .PHONY: sync-ssh-keys
-sync-ssh-keys: ## Run setup-ssh-keys on the running box (pulls fresh keys from SSM)
-	@aws ssm send-command --region $(AWS_REGION) --instance-ids $(INSTANCE_ID) \
-		--document-name "AWS-RunShellScript" \
-		--parameters 'commands=["sudo /opt/devbox/setup.sh setup-ssh-keys"]' \
-		--query "Command.CommandId" --output text | xargs -I {} \
-		sh -c 'aws ssm wait command-executed --region $(AWS_REGION) --command-id {} --instance-id $(INSTANCE_ID); aws ssm get-command-invocation --region $(AWS_REGION) --command-id {} --instance-id $(INSTANCE_ID) --query StandardOutputContent --output text'
+sync-ssh-keys: SCRIPT = bootstrap/scripts/setup-ssh-keys.sh
+sync-ssh-keys: REMOTE = /opt/devbox/scripts/setup-ssh-keys.sh
+sync-ssh-keys: ## Push latest setup-ssh-keys.sh to the box and run it
+	@[ -f $(SCRIPT) ] || (echo "$(SCRIPT) not found"; exit 1)
+	@B64=$$(base64 < $(SCRIPT) | tr -d '\n'); \
+	JSON=$$(printf '{"commands":["echo %s | base64 -d | sudo tee %s > /dev/null","sudo chmod 0755 %s","sudo %s"]}' "$$B64" "$(REMOTE)" "$(REMOTE)" "$(REMOTE)"); \
+	CMD=$$(aws ssm send-command --region $(AWS_REGION) --instance-ids $(INSTANCE_ID) \
+		--document-name AWS-RunShellScript --parameters "$$JSON" \
+		--query Command.CommandId --output text); \
+	echo "command: $$CMD"; \
+	aws ssm wait command-executed --region $(AWS_REGION) --command-id $$CMD --instance-id $(INSTANCE_ID); \
+	aws ssm get-command-invocation --region $(AWS_REGION) --command-id $$CMD --instance-id $(INSTANCE_ID) --query StandardOutputContent --output text
 
 # ---------- terraform lifecycle -----------------------------------------------
 

@@ -257,62 +257,12 @@ write_files:
   # Per-host private keys live in SSM SecureString under /devbox/ssh-keys/<name>
   # and are pulled to ~/.ssh on every boot. SSM is the source of truth so the
   # keys survive EBS rebuilds without ever being checked into git.
+  # Body lives in bootstrap/scripts/setup-ssh-keys.sh (single source of truth;
+  # also pushed by `make sync-ssh-keys`).
   - path: /opt/devbox/scripts/setup-ssh-keys.sh
     permissions: "0755"
     content: |
-      #!/usr/bin/env bash
-      set -euo pipefail
-      source /opt/devbox/env
-      SSH_DIR="/home/$DEVBOX_USER/.ssh"
-      install -d -o "$DEVBOX_USER" -g "$DEVBOX_USER" -m 0700 "$SSH_DIR"
-      install -o "$DEVBOX_USER" -g "$DEVBOX_USER" -m 0600 /dev/null "$SSH_DIR/config.devbox" 2>/dev/null || true
-      fetch_key() {
-        local name="$1" hostname="$2"
-        local priv="$SSH_DIR/$${name}_ed25519"
-        local pub="$priv.pub"
-        if ! aws ssm get-parameter --name "/devbox/ssh-keys/$name" --with-decryption \
-              --region "$AWS_REGION" --query Parameter.Value --output text > "$priv.tmp" 2>/dev/null; then
-          rm -f "$priv.tmp"
-          echo "no key /devbox/ssh-keys/$name in SSM — skipping $hostname"
-          return 0
-        fi
-        install -o "$DEVBOX_USER" -g "$DEVBOX_USER" -m 0600 "$priv.tmp" "$priv"
-        rm -f "$priv.tmp"
-        if aws ssm get-parameter --name "/devbox/ssh-keys/$name.pub" \
-              --region "$AWS_REGION" --query Parameter.Value --output text > "$pub.tmp" 2>/dev/null; then
-          install -o "$DEVBOX_USER" -g "$DEVBOX_USER" -m 0644 "$pub.tmp" "$pub"
-        fi
-        rm -f "$pub.tmp"
-        # Idempotent Host block in ~/.ssh/config.devbox (kept separate so user-added
-        # entries in ~/.ssh/config aren't clobbered).
-        local config="$SSH_DIR/config.devbox"
-        if ! grep -q "^# devbox-managed: $name$" "$config" 2>/dev/null; then
-          cat >> "$config" <<EOF
-      # devbox-managed: $name
-      Host $hostname
-        IdentityFile $priv
-        IdentitiesOnly yes
-        StrictHostKeyChecking accept-new
-
-      EOF
-          chown "$DEVBOX_USER:$DEVBOX_USER" "$config"
-        fi
-        # Ensure user's main ~/.ssh/config sources config.devbox (idempotent).
-        local main="$SSH_DIR/config"
-        touch "$main"
-        chown "$DEVBOX_USER:$DEVBOX_USER" "$main"
-        chmod 0600 "$main"
-        if ! grep -q "^Include $config$" "$main"; then
-          # Include MUST appear before any Host block to apply globally.
-          (echo "Include $config"; echo; cat "$main") > "$main.new"
-          mv "$main.new" "$main"
-          chown "$DEVBOX_USER:$DEVBOX_USER" "$main"
-          chmod 0600 "$main"
-        fi
-        echo "installed SSH key for $hostname"
-      }
-      # Add more hosts here as needed: fetch_key github github.com
-      fetch_key gitlab gitlab.com
+      ${indent(6, setup_ssh_keys_script)}
 
   # -- Step: restic restore (best-effort, first boot) -------------------------
   - path: /opt/devbox/scripts/restic-restore.sh

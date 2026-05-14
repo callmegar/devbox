@@ -48,8 +48,9 @@ resource "aws_security_group" "devbox" {
 # lookups in shell scripts.
 locals {
   cloud_init = templatefile("${path.module}/../bootstrap/cloud-init.yaml", {
-    backup_bucket = var.backup_bucket_name
-    aws_region    = var.aws_region
+    backup_bucket           = var.backup_bucket_name
+    aws_region              = var.aws_region
+    setup_ssh_keys_script   = file("${path.module}/../bootstrap/scripts/setup-ssh-keys.sh")
   })
 }
 
@@ -86,6 +87,12 @@ resource "aws_instance" "devbox" {
     ignore_changes = [
       # Avoid forced replacement when AWS rotates the SSM-published AMI.
       ami,
+      # Don't stop/start a running box just to update user_data — AWS requires
+      # the instance be stopped to modify it. cloud-init only runs on first
+      # boot anyway; push script changes to live boxes via `make sync-*`
+      # targets instead. New boxes still get the current cloud-init at launch.
+      user_data,
+      user_data_base64,
     ]
   }
 }
