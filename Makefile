@@ -57,6 +57,19 @@ upload-sourcegraph-token: ## Upload a Sourcegraph access token to SSM (TOKEN=...
 	echo "Stored /devbox/sourcegraph-token in SSM ($(AWS_REGION))."; \
 	echo "Mint one via: make tunnel  ->  http://localhost:7080  ->  Settings -> Access tokens."
 
+.PHONY: upload-slack-webhook
+upload-slack-webhook: ## Upload a Slack incoming-webhook URL to SSM (URL=... or interactive prompt). Wrapper at /usr/local/bin/ao exports it as SLACK_WEBHOOK_URL.
+	@if [ -n "$(URL)" ]; then \
+	  U="$(URL)"; \
+	else \
+	  read -p "Slack incoming-webhook URL: " -s U; echo; \
+	fi; \
+	if [ -z "$$U" ]; then echo "no URL provided"; exit 1; fi; \
+	aws ssm put-parameter --name /devbox/slack-webhook-url --type SecureString --overwrite \
+		--value "$$U" --region $(AWS_REGION) >/dev/null; \
+	echo "Stored /devbox/slack-webhook-url in SSM ($(AWS_REGION))."; \
+	echo "Mint one via: https://api.slack.com/apps  ->  Create App  ->  Incoming Webhooks."
+
 .PHONY: set-sourcegraph-default-repo
 set-sourcegraph-default-repo: ## Scope sourcegraph-mcp queries to a default repo (REPO=match2160244/match). Empty REPO removes the pin.
 	@if [ -z "$(REPO)" ]; then \

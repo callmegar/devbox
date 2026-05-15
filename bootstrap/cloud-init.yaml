@@ -224,10 +224,31 @@ write_files:
     content: |
       #!/usr/bin/env bash
       set -euo pipefail
-      if command -v ao >/dev/null 2>&1 && ao --version >/dev/null 2>&1; then
-        exit 0
+      # Install the upstream ao binary (npm global) if not present.
+      if ! /usr/bin/ao --version >/dev/null 2>&1; then
+        npm install -g @aoagents/ao
       fi
-      npm install -g @aoagents/ao
+      # Install/refresh a wrapper at /usr/local/bin/ao that pulls notifier
+      # secrets from SSM and exports them before exec'ing the real binary.
+      # /usr/local/bin precedes /usr/bin on PATH, so `ao ...` hits this wrapper
+      # transparently. New secrets just add another `aws ssm get-parameter`
+      # block here — no per-user shell rc to maintain.
+      cat > /usr/local/bin/ao <<'WRAPPER_EOF'
+      #!/usr/bin/env bash
+      set -u
+      . /opt/devbox/env 2>/dev/null || true
+      _ao_ssm() {
+        aws ssm get-parameter --name "$1" --with-decryption \
+          --region "${AWS_REGION:-us-east-2}" \
+          --query Parameter.Value --output text 2>/dev/null || echo ""
+      }
+      # Slack incoming-webhook URL (referenced as ${SLACK_WEBHOOK_URL} in
+      # agent-orchestrator.yaml's notifiers block).
+      : "${SLACK_WEBHOOK_URL:=$(_ao_ssm /devbox/slack-webhook-url)}"
+      export SLACK_WEBHOOK_URL
+      exec /usr/bin/ao "$@"
+      WRAPPER_EOF
+      chmod 0755 /usr/local/bin/ao
 
   # -- Step: install Sourcegraph (single-container) ----------------------------
   - path: /opt/devbox/scripts/install-sourcegraph.sh
