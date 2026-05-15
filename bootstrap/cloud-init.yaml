@@ -58,7 +58,7 @@ write_files:
       # setup-user runs early (right after mount-data) so the ~/.local, ~/.config
       # etc. symlinks point at the data volume BEFORE any tool installs into them
       # (e.g. uv writing to ~/.local/bin). Reordering this is load-bearing.
-      STEPS=(mount-data setup-user install-docker install-node install-python install-terraform install-restic install-sourcegraph setup-ssh-keys restic-restore enable-services)
+      STEPS=(mount-data setup-user install-docker install-node install-python install-terraform install-restic install-claude-code install-sourcegraph setup-ssh-keys restic-restore enable-services)
       log() { echo "[setup $(date -Iseconds)] $*"; }
       run_step() {
         local step="$1"
@@ -193,6 +193,23 @@ write_files:
       exec restic "$@"
       EOF
       chmod 0755 /usr/local/bin/devbox-restic
+
+  # -- Step: install Claude Code (native installer, user-scope) ----------------
+  # Installs `claude` to ~/.local/bin for $DEVBOX_USER. Credentials live in
+  # ~/.claude/.credentials.json after first login; restic snapshots ~/.claude
+  # so subscription auth survives box recreation. First-time login on a fresh
+  # box (no restic snapshot yet) is interactive: run `claude`, press 'c' to
+  # copy the URL, sign in on a laptop, paste the code back.
+  - path: /opt/devbox/scripts/install-claude-code.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      source /opt/devbox/env
+      if sudo -u "$DEVBOX_USER" bash -lc 'command -v claude' >/dev/null 2>&1; then
+        exit 0
+      fi
+      sudo -u "$DEVBOX_USER" bash -lc 'curl -fsSL https://claude.ai/install.sh | bash'
 
   # -- Step: install Sourcegraph (single-container) ----------------------------
   - path: /opt/devbox/scripts/install-sourcegraph.sh
