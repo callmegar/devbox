@@ -61,17 +61,19 @@ upload-sourcegraph-token: ## Upload a Sourcegraph access token to SSM (TOKEN=...
 init-ao-config: SCRIPT = bootstrap/scripts/init-ao-config.py
 init-ao-config: REMOTE = /opt/devbox/scripts/init-ao-config.py
 init-ao-config: REPO ?= /home/ubuntu/repos/match
-init-ao-config: CHANNEL ?= '\#agent-updates'
-init-ao-config: ## Merge Slack notifier (global) + Linear tracker (per-project) into ao config (TEAM=MAT [REPO=...] [CHANNEL='#...'])
-	@if [ -z "$(TEAM)" ]; then echo "usage: make init-ao-config TEAM=<linear-team-key> [REPO=path] [CHANNEL='#chan']"; exit 1; fi
+init-ao-config: CHANNEL ?= agent-updates
+init-ao-config: BRANCH ?=
+init-ao-config: ## Merge Slack notifier (global) + Linear tracker (per-project) into ao config (TEAM=MAT [REPO=...] [CHANNEL=name] [BRANCH=develop]). CHANNEL takes the channel name without `#`.
+	@if [ -z "$(TEAM)" ]; then echo "usage: make init-ao-config TEAM=<linear-team-key> [REPO=path] [CHANNEL=channel-name] [BRANCH=develop]"; exit 1; fi
 	@[ -f $(SCRIPT) ] || (echo "$(SCRIPT) not found"; exit 1)
-	@B64=$$(base64 < $(SCRIPT) | tr -d '\n'); \
+	@BRANCH_ARG=""; if [ -n "$(BRANCH)" ]; then BRANCH_ARG="--default-branch $(BRANCH)"; fi; \
+	B64=$$(base64 < $(SCRIPT) | tr -d '\n'); \
 	printf '%s\n' \
 	  '{"commands":[' \
 	  '"sudo mkdir -p /opt/devbox/scripts",' \
 	  "\"echo $$B64 | base64 -d | sudo tee $(REMOTE) > /dev/null\"," \
 	  "\"sudo chmod 0755 $(REMOTE)\"," \
-	  "\"sudo -u ubuntu env AWS_REGION=$(AWS_REGION) /home/ubuntu/.local/bin/uv run --script $(REMOTE) --team $(TEAM) --repo $(REPO) --channel $(CHANNEL)\"" \
+	  "\"sudo -u ubuntu env AWS_REGION=$(AWS_REGION) /home/ubuntu/.local/bin/uv run --script $(REMOTE) --team $(TEAM) --repo $(REPO) --channel $(CHANNEL) $$BRANCH_ARG\"" \
 	  ']}' > /tmp/devbox-init-ao.json
 	@CMD=$$(aws ssm send-command --region $(AWS_REGION) --instance-ids $(INSTANCE_ID) --document-name AWS-RunShellScript --parameters file:///tmp/devbox-init-ao.json --query Command.CommandId --output text); \
 	echo "command: $$CMD"; \
