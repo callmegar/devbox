@@ -120,9 +120,12 @@ def main() -> int:
         by_name.setdefault(r, {"name": r})
     merged = list(by_name.values())
 
+    # projectQuery is required by Sourcegraph's GitLab config schema even when
+    # we only want the explicit `projects` list — `"none"` disables auto-discovery.
     config = {
         "url": args.url,
         "token": gitlab_token,
+        "projectQuery": ["none"],
         "projects": merged,
     }
     config_json = json.dumps(config)

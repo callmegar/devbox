@@ -13,9 +13,11 @@ curl -sS -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
   | python3 -c '
 import json, sys
 d = json.load(sys.stdin)["data"]["repositories"]
-print(f"total: {d[\"totalCount\"]}")
+print("total:", d["totalCount"])
 for n in d["nodes"]:
     m = n["mirrorInfo"]
     err = m.get("lastError") or "-"
-    print(f"  {n[\"name\"]:50}  cloned={m[\"cloned\"]!s:5}  in_progress={m[\"cloneInProgress\"]!s:5}  last_error={err[:40]}")
+    line = "  {name:50}  cloned={cloned!s:5}  in_progress={ip!s:5}  last_error={err}".format(
+        name=n["name"], cloned=m["cloned"], ip=m["cloneInProgress"], err=err[:60])
+    print(line)
 '

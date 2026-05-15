@@ -57,6 +57,26 @@ upload-sourcegraph-token: ## Upload a Sourcegraph access token to SSM (TOKEN=...
 	echo "Stored /devbox/sourcegraph-token in SSM ($(AWS_REGION))."; \
 	echo "Mint one via: make tunnel  ->  http://localhost:7080  ->  Settings -> Access tokens."
 
+.PHONY: set-sourcegraph-default-repo
+set-sourcegraph-default-repo: ## Scope sourcegraph-mcp queries to a default repo (REPO=match2160244/match). Empty REPO removes the pin.
+	@if [ -z "$(REPO)" ]; then \
+	  aws ssm delete-parameter --name /devbox/sourcegraph-default-repo --region $(AWS_REGION) 2>/dev/null && echo "Removed /devbox/sourcegraph-default-repo (no default repo)" || echo "/devbox/sourcegraph-default-repo was not set"; \
+	else \
+	  aws ssm put-parameter --name /devbox/sourcegraph-default-repo --type String --overwrite \
+	    --value "$(REPO)" --region $(AWS_REGION) >/dev/null; \
+	  echo "Stored /devbox/sourcegraph-default-repo=$(REPO). sourcegraph-mcp queries now inject repo:$(REPO) by default."; \
+	fi
+
+.PHONY: set-sourcegraph-default-rev
+set-sourcegraph-default-rev: ## Pin sourcegraph-mcp searches to a default branch/rev (REV=develop). Empty REV removes the pin.
+	@if [ -z "$(REV)" ]; then \
+	  aws ssm delete-parameter --name /devbox/sourcegraph-default-rev --region $(AWS_REGION) 2>/dev/null && echo "Removed /devbox/sourcegraph-default-rev (no default rev)" || echo "/devbox/sourcegraph-default-rev was not set"; \
+	else \
+	  aws ssm put-parameter --name /devbox/sourcegraph-default-rev --type String --overwrite \
+	    --value "$(REV)" --region $(AWS_REGION) >/dev/null; \
+	  echo "Stored /devbox/sourcegraph-default-rev=$(REV). sourcegraph-mcp queries now inject rev:$(REV) by default."; \
+	fi
+
 .PHONY: upload-gitlab-api-token
 upload-gitlab-api-token: ## Upload a GitLab personal access token to SSM (TOKEN=... or interactive prompt). Needs scopes: read_api, read_repository.
 	@if [ -n "$(TOKEN)" ]; then \

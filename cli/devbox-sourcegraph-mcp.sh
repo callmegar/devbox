@@ -14,5 +14,15 @@ SOURCEGRAPH_TOKEN="$(aws ssm get-parameter \
 if [ -z "$SOURCEGRAPH_TOKEN" ]; then
   echo "[devbox-sourcegraph-mcp] /devbox/sourcegraph-token not in SSM. Run 'make upload-sourcegraph-token TOKEN=<token>' from your laptop." >&2
 fi
-export SOURCEGRAPH_URL SOURCEGRAPH_TOKEN
+# Optional: scope all queries to a single repo and pin them to a working branch
+# (e.g. develop). Either or both may be unset.
+SOURCEGRAPH_DEFAULT_REPO="$(aws ssm get-parameter \
+    --name /devbox/sourcegraph-default-repo \
+    --region "${AWS_REGION:-us-east-2}" \
+    --query Parameter.Value --output text 2>/dev/null || echo "")"
+SOURCEGRAPH_DEFAULT_REV="$(aws ssm get-parameter \
+    --name /devbox/sourcegraph-default-rev \
+    --region "${AWS_REGION:-us-east-2}" \
+    --query Parameter.Value --output text 2>/dev/null || echo "")"
+export SOURCEGRAPH_URL SOURCEGRAPH_TOKEN SOURCEGRAPH_DEFAULT_REPO SOURCEGRAPH_DEFAULT_REV
 exec /home/ubuntu/.local/bin/uv run --project /opt/devbox/tooling --quiet devbox-sourcegraph-mcp "$@"
