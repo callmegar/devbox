@@ -23,6 +23,10 @@ MCP_SERVERS: dict[str, dict] = {
         "command": "/usr/local/bin/devbox-catalog-mcp",
         "args": [],
     },
+    "sourcegraph": {
+        "command": "/usr/local/bin/devbox-sourcegraph-mcp",
+        "args": [],
+    },
 }
 
 CONFIG_PATH = Path.home() / ".claude.json"

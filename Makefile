@@ -44,6 +44,19 @@ set-restic-password: ## Generate a restic password and store it in SSM (idempote
 		echo "Back it up somewhere safe — losing it makes your S3 backups unrecoverable."; \
 	fi
 
+.PHONY: upload-sourcegraph-token
+upload-sourcegraph-token: ## Upload a Sourcegraph access token to SSM (TOKEN=... or interactive prompt)
+	@if [ -n "$(TOKEN)" ]; then \
+	  T="$(TOKEN)"; \
+	else \
+	  read -p "Sourcegraph access token: " -s T; echo; \
+	fi; \
+	if [ -z "$$T" ]; then echo "no token provided"; exit 1; fi; \
+	aws ssm put-parameter --name /devbox/sourcegraph-token --type SecureString --overwrite \
+		--value "$$T" --region $(AWS_REGION) >/dev/null; \
+	echo "Stored /devbox/sourcegraph-token in SSM ($(AWS_REGION))."; \
+	echo "Mint one via: make tunnel  ->  http://localhost:7080  ->  Settings -> Access tokens."
+
 .PHONY: upload-gitlab-key
 upload-gitlab-key: KEY_FILE ?= ~/.ssh/cbakon
 upload-gitlab-key: ## Upload GitLab SSH key (private+public) to SSM under /devbox/ssh-keys/gitlab
@@ -102,6 +115,7 @@ sync-tooling: ## Package cli/ tooling, push to the box via S3, uv sync, install 
 	  '"sudo -u ubuntu bash -lc \"cd /opt/devbox/tooling && /home/ubuntu/.local/bin/uv sync --quiet\"",' \
 	  '"install -m 0755 /opt/devbox/tooling/devbox.sh /usr/local/bin/devbox",' \
 	  '"install -m 0755 /opt/devbox/tooling/devbox-catalog-mcp.sh /usr/local/bin/devbox-catalog-mcp",' \
+	  '"install -m 0755 /opt/devbox/tooling/devbox-sourcegraph-mcp.sh /usr/local/bin/devbox-sourcegraph-mcp",' \
 	  '"sudo -u ubuntu /usr/local/bin/devbox --help >/dev/null 2>&1 && echo \"tooling installed ok\" || echo \"tooling install FAILED\""' \
 	  ']}' > /tmp/devbox-sync-tooling.json
 	@CMD=$$(aws ssm send-command --region $(AWS_REGION) --instance-ids $(INSTANCE_ID) \

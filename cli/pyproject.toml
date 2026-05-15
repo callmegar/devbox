@@ -11,6 +11,7 @@ dependencies = [
 [project.scripts]
 devbox = "devbox_catalog.cli:main"
 devbox-catalog-mcp = "devbox_catalog.mcp_server:main"
+devbox-sourcegraph-mcp = "devbox_sourcegraph.mcp_server:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]
@@ -18,4 +19,4 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["devbox_catalog*"]
+include = ["devbox_catalog*", "devbox_sourcegraph*"]
