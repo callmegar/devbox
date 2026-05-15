@@ -57,6 +57,19 @@ upload-sourcegraph-token: ## Upload a Sourcegraph access token to SSM (TOKEN=...
 	echo "Stored /devbox/sourcegraph-token in SSM ($(AWS_REGION))."; \
 	echo "Mint one via: make tunnel  ->  http://localhost:7080  ->  Settings -> Access tokens."
 
+.PHONY: upload-linear-api-token
+upload-linear-api-token: ## Upload a Linear personal API key to SSM (TOKEN=... or interactive prompt). Wrapper at /usr/local/bin/ao exports it as LINEAR_API_KEY.
+	@if [ -n "$(TOKEN)" ]; then \
+	  T="$(TOKEN)"; \
+	else \
+	  read -p "Linear personal API key: " -s T; echo; \
+	fi; \
+	if [ -z "$$T" ]; then echo "no token provided"; exit 1; fi; \
+	aws ssm put-parameter --name /devbox/linear-api-key --type SecureString --overwrite \
+		--value "$$T" --region $(AWS_REGION) >/dev/null; \
+	echo "Stored /devbox/linear-api-key in SSM ($(AWS_REGION))."; \
+	echo "Mint one via: https://linear.app/settings/api  ->  Personal API keys."
+
 .PHONY: upload-slack-webhook
 upload-slack-webhook: ## Upload a Slack incoming-webhook URL to SSM (URL=... or interactive prompt). Wrapper at /usr/local/bin/ao exports it as SLACK_WEBHOOK_URL.
 	@if [ -n "$(URL)" ]; then \

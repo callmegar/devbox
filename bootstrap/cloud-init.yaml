@@ -245,7 +245,9 @@ write_files:
       # Slack incoming-webhook URL (referenced as ${SLACK_WEBHOOK_URL} in
       # agent-orchestrator.yaml's notifiers block).
       : "${SLACK_WEBHOOK_URL:=$(_ao_ssm /devbox/slack-webhook-url)}"
-      export SLACK_WEBHOOK_URL
+      # Linear personal API key (used by ao's `tracker: { plugin: linear, ... }`).
+      : "${LINEAR_API_KEY:=$(_ao_ssm /devbox/linear-api-key)}"
+      export SLACK_WEBHOOK_URL LINEAR_API_KEY
       exec /usr/bin/ao "$@"
       WRAPPER_EOF
       chmod 0755 /usr/local/bin/ao
