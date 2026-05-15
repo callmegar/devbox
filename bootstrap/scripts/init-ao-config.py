@@ -14,9 +14,13 @@ idempotently merges into ao's config files:
       notificationRouting.{urgent,action,warning}: appends "slack" if absent
 
   <repo>/agent-orchestrator.yaml             # per-project (the target repo)
-      projects.<key>.tracker: { plugin: linear, teamId: <UUID> }
+      tracker: { plugin: linear, teamId: <UUID> }
+      orchestratorRules: <managed block teaching the orchestrator to use the
+                          devbox Linear MCP for epic-driven fan-out>
 
-Round-trips via ruamel.yaml so comments and existing key order survive.
+Round-trips via ruamel.yaml so comments and existing key order survive. The
+`tracker` and `orchestratorRules` keys are devbox-managed and get overwritten
+on each run; everything else (agentRules, etc.) is preserved.
 
 Usage (on the box, invoked by `make init-ao-config`):
   init-ao-config.py --team ABC
@@ -37,6 +41,43 @@ from pathlib import Path
 from ruamel.yaml import YAML
 
 GLOBAL_CONFIG_PATH = Path.home() / ".agent-orchestrator" / "config.yaml"
+
+# Managed block injected into per-project agent-orchestrator.yaml under the
+# `orchestratorRules` key. Overwritten on each run — don't hand-edit. Teaches
+# the orchestrator session how to use the devbox-linear MCP for epic-driven
+# fan-out so a single "work this epic" instruction kicks off many parallel
+# workers.
+ORCHESTRATOR_RULES = """\
+# Epic-driven autonomous fan-out (devbox)
+When the user points you at a Linear epic (a parent issue with children) and
+asks you to "work it" / "drive it" / "run it through", do not implement
+yourself — fan out parallel workers via ao. The devbox-linear MCP exposes the
+needed tools:
+
+1. Call `list_ready_issues(parent=<EPIC-ID>)`. The MCP filters out children
+   with unresolved `blocks` relations, so the returned set is genuinely
+   pickup-able right now. Use the response's `blocked_preview` to anticipate
+   what unblocks next.
+2. For each ready child, run `ao spawn <identifier>` (or `ao batch-spawn`
+   for 3+). Each worker gets its own worktree + branch named after the
+   identifier; they run in parallel.
+3. Workers should call `claim_issue(<id>)` from their Linear MCP at start —
+   that flips state to "In Progress" and acts as the lock against duplicates.
+4. Poll `ao status --reports 1` periodically. When a worker reports
+   `completed`, call `list_ready_issues` again — completing one issue usually
+   unblocks others. Spawn the newly-ready ones.
+5. Terminate the run when `list_ready_issues` returns empty AND no workers
+   are active. Post a Slack summary listing what completed, what's left, and
+   any items still blocked on external dependencies.
+
+Refuse to fan-out and ask for confirmation if:
+- The epic has more than ~10 ready children (cost / blast radius).
+- Any ready child has no description or acceptance criteria — a worker can't
+  do a good job on a stub; flag it back to the user instead.
+
+If the user references a single Linear issue (no parent context), treat it as
+a normal `ao spawn` — no fan-out.
+"""
 
 
 def ssm(name: str) -> str:
@@ -131,17 +172,24 @@ def find_global_project_key(projects: dict, repo_path: str) -> str | None:
 
 
 def merge_project_config(yaml: YAML, repo_path: str, team_uuid: str) -> bool:
-    """Write tracker into <repo>/agent-orchestrator.yaml (the per-project
-    OVERRIDES file). ao 0.8+ uses an unwrapped shape — fields live at the top
-    level, no `projects:` wrapper. We auto-migrate from the legacy wrapped form
-    if we encounter it.
+    """Write tracker + orchestratorRules into <repo>/agent-orchestrator.yaml
+    (the per-project OVERRIDES file). ao 0.8+ uses an unwrapped shape — fields
+    live at the top level, no `projects:` wrapper. We auto-migrate from the
+    legacy wrapped form if we encounter it.
 
     defaultBranch and defaults.notifiers no longer go here — they live in the
     global config under projects.<key>; see update_global_project().
+
+    Devbox owns these keys (overwritten each run):
+      tracker            — plugin + teamId
+      orchestratorRules  — the epic-driven fan-out playbook (ORCHESTRATOR_RULES)
+    Everything else (agentRules, etc.) is preserved as-is.
     """
     yaml_path = Path(repo_path) / "agent-orchestrator.yaml"
+    desired_tracker = {"plugin": "linear", "teamId": team_uuid}
+
     if not yaml_path.exists():
-        cfg = {"tracker": {"plugin": "linear", "teamId": team_uuid}}
+        cfg = {"tracker": desired_tracker, "orchestratorRules": ORCHESTRATOR_RULES}
         with open(yaml_path, "w") as f:
             yaml.dump(cfg, f)
         return True
@@ -149,6 +197,7 @@ def merge_project_config(yaml: YAML, repo_path: str, team_uuid: str) -> bool:
     cfg = yaml.load(yaml_path) or {}
 
     # Legacy migration: wrapped `projects.<key>.*` → flat top-level fields.
+    migrated = False
     if isinstance(cfg, dict) and isinstance(cfg.get("projects"), dict):
         projects = cfg["projects"]
         if len(projects) != 1:
@@ -159,14 +208,19 @@ def merge_project_config(yaml: YAML, repo_path: str, team_uuid: str) -> bool:
             )
         only_key = next(iter(projects))
         cfg = dict(projects[only_key])
+        migrated = True
 
-    desired = {"plugin": "linear", "teamId": team_uuid}
-    if dict(cfg.get("tracker") or {}) == desired:
-        # Already up to date AND we didn't have to migrate above (no wrapper).
-        if yaml_path.read_text().lstrip().startswith("projects:") is False:
-            return False
+    changed = migrated
+    if dict(cfg.get("tracker") or {}) != desired_tracker:
+        cfg["tracker"] = desired_tracker
+        changed = True
+    if cfg.get("orchestratorRules") != ORCHESTRATOR_RULES:
+        cfg["orchestratorRules"] = ORCHESTRATOR_RULES
+        changed = True
 
-    cfg["tracker"] = desired
+    if not changed:
+        return False
+
     with open(yaml_path, "w") as f:
         yaml.dump(cfg, f)
     return True
