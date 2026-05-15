@@ -93,6 +93,13 @@ upload-linear-api-token: ## Upload a Linear personal API key to SSM (TOKEN=... o
 	echo "Stored /devbox/linear-api-key in SSM ($(AWS_REGION))."; \
 	echo "Mint one via: https://linear.app/settings/api  ->  Personal API keys."
 
+.PHONY: upload-linear-default-team
+upload-linear-default-team: ## Set the default Linear team key in SSM (TEAM=MAT). Lets devbox-linear-mcp omit team= in tool calls.
+	@if [ -z "$(TEAM)" ]; then echo "usage: make upload-linear-default-team TEAM=<KEY>"; exit 1; fi
+	@aws ssm put-parameter --name /devbox/linear-default-team-key --type String --overwrite \
+		--value "$(TEAM)" --region $(AWS_REGION) >/dev/null
+	@echo "Stored /devbox/linear-default-team-key=$(TEAM) in SSM ($(AWS_REGION))."
+
 .PHONY: upload-slack-webhook
 upload-slack-webhook: ## Upload a Slack incoming-webhook URL to SSM (URL=... or interactive prompt). Wrapper at /usr/local/bin/ao exports it as SLACK_WEBHOOK_URL.
 	@if [ -n "$(URL)" ]; then \
@@ -229,6 +236,7 @@ sync-tooling: ## Package cli/ tooling, push to the box via S3, uv sync, install 
 	  '"install -m 0755 /opt/devbox/tooling/devbox.sh /usr/local/bin/devbox",' \
 	  '"install -m 0755 /opt/devbox/tooling/devbox-catalog-mcp.sh /usr/local/bin/devbox-catalog-mcp",' \
 	  '"install -m 0755 /opt/devbox/tooling/devbox-sourcegraph-mcp.sh /usr/local/bin/devbox-sourcegraph-mcp",' \
+	  '"install -m 0755 /opt/devbox/tooling/devbox-linear-mcp.sh /usr/local/bin/devbox-linear-mcp",' \
 	  '"sudo -u ubuntu /usr/local/bin/devbox --help >/dev/null 2>&1 && echo \"tooling installed ok\" || echo \"tooling install FAILED\""' \
 	  ']}' > /tmp/devbox-sync-tooling.json
 	@CMD=$$(aws ssm send-command --region $(AWS_REGION) --instance-ids $(INSTANCE_ID) \
