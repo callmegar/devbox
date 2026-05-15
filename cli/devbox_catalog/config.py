@@ -1,7 +1,8 @@
 """Repo layout auto-detection.
 
 Figures out where the Python modules, frontend, and Terraform stacks live.
-Tuned for the `match` monorepo layout but falls back to common conventions.
+Tuned for a typical Python + frontend + Terraform monorepo layout but
+falls back to common conventions.
 A `.devbox.toml` at the repo root can override (not yet wired — v2).
 """
 

@@ -1,6 +1,6 @@
 """Enrichment extractor: harvest purpose text from CLAUDE.md / README.md files.
 
-The `match` repo keeps a cascading CLAUDE.md per backend module — that's the
+The target repo is expected to keep a cascading CLAUDE.md per backend module — that's the
 hand-authored semantic layer. The terraform stacks have no per-stack CLAUDE.md;
 instead `terraform/CLAUDE.md` carries a `| Directory | Purpose |` table. We
 harvest a one-line purpose per node, in priority order:

@@ -7,7 +7,7 @@ e.g. `..._mls_initial_schema.py` belongs to the `mls_loader` module — so owner
 attribution matches the component token against module names with a small
 amount of prefix tolerance.
 
-`match`'s migrations declare schemas as raw SQL inside `op.execute()` —
+The target repo's migrations declare schemas as raw SQL inside `op.execute()` —
 `CREATE SCHEMA IF NOT EXISTS workflows`, then `CREATE TABLE workflows.foo` —
 not via the SQLAlchemy `schema=` kwarg. So we:
   pass 1: scan *every* migration for `CREATE SCHEMA` to learn the schema set;

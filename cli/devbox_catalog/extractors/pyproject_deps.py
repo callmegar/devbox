@@ -1,8 +1,9 @@
 """Enrichment extractor: external dependencies per Python module.
 
-The `match` backend is one pyproject.toml. [project].dependencies are shared
+The target backend uses one pyproject.toml. [project].dependencies are shared
 by every module; [dependency-groups] whose name matches a module are that
-module's extra deps (e.g. the `training`, `mls_loader`, `pois`, `noise` groups).
+module's extra deps (e.g. `training`, `mls_loader`, `pois`, `noise` groups —
+substitute your own module names).
 """
 
 from __future__ import annotations

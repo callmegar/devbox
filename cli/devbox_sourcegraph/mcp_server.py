@@ -149,7 +149,7 @@ def code_search(query: str, max_results: int = 30) -> dict[str, Any]:
     context. `query` uses Sourcegraph's native search syntax — examples:
 
       ClientProfile lang:python
-      repo:match file:migrations CREATE
+      repo:my-app file:migrations CREATE
       lang:typescript favorites
       select:file file:Dockerfile
     """

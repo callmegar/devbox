@@ -10,7 +10,7 @@ updates its config if found, creates a new one otherwise. Repo list is merged
 (deduped) so repeat invocations add repos without dropping previous ones.
 
 Usage:
-  configure-sourcegraph-gitlab.py --url https://gitlab.com match2160244/match
+  configure-sourcegraph-gitlab.py --url https://gitlab.com your-org/your-repo
 """
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="https://gitlab.com", help="GitLab base URL")
     ap.add_argument("repos", nargs="+",
-                    help="GitLab project full-paths (e.g. match2160244/match)")
+                    help="GitLab project full-paths (e.g. your-org/your-repo)")
     args = ap.parse_args()
 
     if not os.environ.get("SOURCEGRAPH_TOKEN"):

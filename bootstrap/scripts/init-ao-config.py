@@ -6,21 +6,21 @@
 """Initialize ao's Slack notifier (global) and Linear tracker (per-project).
 
 Pulls /devbox/linear-api-key from SSM (via the EC2 instance role), resolves a
-Linear team KEY (e.g. "MAT") to its UUID via Linear's GraphQL API, then
+Linear team KEY (e.g. "ABC") to its UUID via Linear's GraphQL API, then
 idempotently merges into ao's config files:
 
   ~/.agent-orchestrator/config.yaml          # global
       notifiers.slack: { plugin, webhook: ${SLACK_WEBHOOK_URL}, channel }
       notificationRouting.{urgent,action,warning}: appends "slack" if absent
 
-  <repo>/agent-orchestrator.yaml             # per-project (match's repo)
+  <repo>/agent-orchestrator.yaml             # per-project (the target repo)
       projects.<key>.tracker: { plugin: linear, teamId: <UUID> }
 
 Round-trips via ruamel.yaml so comments and existing key order survive.
 
 Usage (on the box, invoked by `make init-ao-config`):
-  init-ao-config.py --team MAT
-  init-ao-config.py --team MAT --repo /home/ubuntu/repos/match --channel '#match-agents'
+  init-ao-config.py --team ABC
+  init-ao-config.py --team ABC --repo /home/ubuntu/repos/your-repo --channel '#agent-updates'
 """
 
 from __future__ import annotations
@@ -199,8 +199,8 @@ def update_global_project(yaml: YAML, repo_path: str,
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--team", required=True, help="Linear team key (e.g. MAT)")
-    ap.add_argument("--repo", default=str(Path.home() / "repos" / "match"),
+    ap.add_argument("--team", required=True, help="Linear team key (e.g. ABC)")
+    ap.add_argument("--repo", default=str(Path.home() / "repos" / "your-repo"),
                     help="path to the project repo holding agent-orchestrator.yaml")
     ap.add_argument("--channel", default="agent-updates",
                     help="Slack channel for notifications. Leading '#' is added "

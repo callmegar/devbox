@@ -60,10 +60,10 @@ upload-sourcegraph-token: ## Upload a Sourcegraph access token to SSM (TOKEN=...
 .PHONY: init-ao-config
 init-ao-config: SCRIPT = bootstrap/scripts/init-ao-config.py
 init-ao-config: REMOTE = /opt/devbox/scripts/init-ao-config.py
-init-ao-config: REPO ?= /home/ubuntu/repos/match
+init-ao-config: REPO ?= /home/ubuntu/repos/your-repo
 init-ao-config: CHANNEL ?= agent-updates
 init-ao-config: BRANCH ?=
-init-ao-config: ## Merge Slack notifier (global) + Linear tracker (per-project) into ao config (TEAM=MAT [REPO=...] [CHANNEL=name] [BRANCH=develop]). CHANNEL takes the channel name without `#`.
+init-ao-config: ## Merge Slack notifier (global) + Linear tracker (per-project) into ao config (TEAM=ABC [REPO=...] [CHANNEL=name] [BRANCH=develop]). CHANNEL takes the channel name without `#`.
 	@if [ -z "$(TEAM)" ]; then echo "usage: make init-ao-config TEAM=<linear-team-key> [REPO=path] [CHANNEL=channel-name] [BRANCH=develop]"; exit 1; fi
 	@[ -f $(SCRIPT) ] || (echo "$(SCRIPT) not found"; exit 1)
 	@BRANCH_ARG=""; if [ -n "$(BRANCH)" ]; then BRANCH_ARG="--default-branch $(BRANCH)"; fi; \
@@ -107,7 +107,7 @@ upload-slack-webhook: ## Upload a Slack incoming-webhook URL to SSM (URL=... or 
 	echo "Mint one via: https://api.slack.com/apps  ->  Create App  ->  Incoming Webhooks."
 
 .PHONY: set-sourcegraph-default-repo
-set-sourcegraph-default-repo: ## Scope sourcegraph-mcp queries to a default repo (REPO=match2160244/match). Empty REPO removes the pin.
+set-sourcegraph-default-repo: ## Scope sourcegraph-mcp queries to a default repo (REPO=your-org/your-repo). Empty REPO removes the pin.
 	@if [ -z "$(REPO)" ]; then \
 	  aws ssm delete-parameter --name /devbox/sourcegraph-default-repo --region $(AWS_REGION) 2>/dev/null && echo "Removed /devbox/sourcegraph-default-repo (no default repo)" || echo "/devbox/sourcegraph-default-repo was not set"; \
 	else \
@@ -171,7 +171,7 @@ sourcegraph-repos: ## List repos Sourcegraph has cloned/indexed
 	aws ssm get-command-invocation --region $(AWS_REGION) --command-id $$CMD --instance-id $(INSTANCE_ID) --query StandardOutputContent --output text
 
 .PHONY: upload-gitlab-key
-upload-gitlab-key: KEY_FILE ?= ~/.ssh/cbakon
+upload-gitlab-key: KEY_FILE ?= ~/.ssh/id_ed25519
 upload-gitlab-key: ## Upload GitLab SSH key (private+public) to SSM under /devbox/ssh-keys/gitlab
 	@if [ ! -f $(KEY_FILE) ]; then echo "private key not found: $(KEY_FILE)"; exit 1; fi
 	@if [ ! -f $(KEY_FILE).pub ]; then echo "public key not found: $(KEY_FILE).pub"; exit 1; fi

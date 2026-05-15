@@ -81,7 +81,7 @@ The box ships ready to *boot* but most integrations need credentials you mint by
 
 ```bash
 # Outbound GitLab SSH key — for git clone over ssh from the box.
-# Uploads ~/.ssh/cbakon{,.pub} (override with KEY_FILE=).
+# Uploads ~/.ssh/id_ed25519{,.pub} (override with KEY_FILE=).
 make upload-gitlab-key
 make sync-ssh-keys                    # install onto the running box
 
@@ -108,14 +108,14 @@ make upload-slack-webhook
 
 ```bash
 # Tell Sourcegraph to clone + index a GitLab repo. Repeat to add more.
-make configure-sourcegraph-gitlab REPOS=match2160244/match
+make configure-sourcegraph-gitlab REPOS=your-org/your-repo
 
 # Watch the clone complete (~30s for a small repo).
 make sourcegraph-repos      # expect cloned=True
 
 # Pin sourcegraph-mcp queries to a default repo + working branch so
 # `find_symbol("Foo")` doesn't need explicit repo:/rev: filters.
-make set-sourcegraph-default-repo REPO=match2160244/match
+make set-sourcegraph-default-repo REPO=your-org/your-repo
 make set-sourcegraph-default-rev REV=develop
 ```
 
@@ -123,7 +123,7 @@ make set-sourcegraph-default-rev REV=develop
 
 ```bash
 # On the box (e.g. via `make ssh`):
-cd ~/repos/match
+cd ~/repos/your-repo
 ao start          # auto-generates agent-orchestrator.yaml on first run
                   # (do this once; `ao start` again later picks up the existing config)
 ```
@@ -133,10 +133,10 @@ From your laptop:
 ```bash
 # Merge Slack notifier (global config) + Linear tracker (per-project) +
 # pin defaultBranch. Idempotent — re-run safely after editing.
-make init-ao-config TEAM=MAT BRANCH=develop
+make init-ao-config TEAM=ABC BRANCH=develop
 ```
 
-The Slack webhook lands in `~/.agent-orchestrator/config.yaml` (user-scope on the box, never committed). The Linear team key gets resolved to its UUID via the Linear GraphQL API. The per-project YAML in match's repo ends up with just `tracker:` + `agentRules:`.
+The Slack webhook lands in `~/.agent-orchestrator/config.yaml` (user-scope on the box, never committed). The Linear team key gets resolved to its UUID via the Linear GraphQL API. The per-project YAML in the target repo ends up with just `tracker:` + `agentRules:`.
 
 ### Claude Code first login
 
@@ -205,7 +205,7 @@ make logs           # tail cloud-init/setup logs
 
 ## SSM secrets reference
 
-Everything sensitive lives in SSM SecureString under `/devbox/*`, fetched at runtime by the EC2 instance role. Nothing in this repo or in match's repo holds credentials.
+Everything sensitive lives in SSM SecureString under `/devbox/*`, fetched at runtime by the EC2 instance role. Nothing in this repo or in the target repo holds credentials.
 
 | Name | Set with | Used by |
 |---|---|---|
@@ -255,5 +255,5 @@ The `make stop` / `make start` workflow is the biggest lever. Treat the box as e
 - SSM Session Manager enabled as an SSH fallback (so a CIDR mistake doesn't lock you out).
 - All EBS volumes encrypted at rest.
 - S3 backup bucket: versioned, encrypted, public-access blocked, lifecycle-managed.
-- No secrets in this repo or in match's repo — everything in SSM under `/devbox/*`, pulled at runtime via the instance role.
+- No secrets in this repo or in the target repo — everything in SSM under `/devbox/*`, pulled at runtime via the instance role.
 - Sourcegraph and ao bound to `127.0.0.1` only — reach via `make tunnel`.
