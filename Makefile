@@ -87,6 +87,7 @@ sync-tooling: ## Package cli/ tooling, push to the box via S3, uv sync, install 
 	  '"sudo -u ubuntu bash -c \"test -L ~/.devbox || ln -sfn /data/home/.devbox ~/.devbox\"",' \
 	  '"sudo -u ubuntu bash -lc \"cd /opt/devbox/tooling && /home/ubuntu/.local/bin/uv sync --quiet\"",' \
 	  '"install -m 0755 /opt/devbox/tooling/devbox.sh /usr/local/bin/devbox",' \
+	  '"install -m 0755 /opt/devbox/tooling/devbox-catalog-mcp.sh /usr/local/bin/devbox-catalog-mcp",' \
 	  '"sudo -u ubuntu /usr/local/bin/devbox --help >/dev/null 2>&1 && echo \"tooling installed ok\" || echo \"tooling install FAILED\""' \
 	  ']}' > /tmp/devbox-sync-tooling.json
 	@CMD=$$(aws ssm send-command --region $(AWS_REGION) --instance-ids $(INSTANCE_ID) \

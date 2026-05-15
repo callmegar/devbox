@@ -5,10 +5,12 @@ description = "Generates a system-comprehension catalog for a polyglot monorepo"
 requires-python = ">=3.12"
 dependencies = [
     "pyyaml>=6.0",
+    "mcp>=1.0",
 ]
 
 [project.scripts]
 devbox = "devbox_catalog.cli:main"
+devbox-catalog-mcp = "devbox_catalog.mcp_server:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]

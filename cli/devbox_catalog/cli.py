@@ -17,9 +17,7 @@ import sys
 from pathlib import Path
 
 from .build import build_catalog
-from .model import Catalog, CatalogNode
-
-CACHE_DIR = Path.home() / ".devbox" / "catalog"
+from .catalog_io import cache_path, load_or_build
 
 _KIND_LABEL = {
     "python_module": "py",
@@ -28,46 +26,13 @@ _KIND_LABEL = {
 }
 
 
-def _cache_path(repo_path: Path) -> Path:
-    return CACHE_DIR / f"{repo_path.resolve().name}.json"
-
-
-def _load_or_build(repo: str) -> Catalog:
-    repo_path = Path(repo).resolve()
-    cache = _cache_path(repo_path)
-    if cache.exists():
-        return _catalog_from_dict(json.loads(cache.read_text()))
-    catalog = build_catalog(repo_path)
-    _write_cache(catalog)
-    return catalog
-
-
-def _catalog_from_dict(data: dict) -> Catalog:
-    catalog = Catalog(
-        repo=data["repo"],
-        repo_path=data["repo_path"],
-        generated_at=data["generated_at"],
-        warnings=data.get("warnings", []),
-    )
-    for name, node in data.get("nodes", {}).items():
-        catalog.nodes[name] = CatalogNode(**node)
-    return catalog
-
-
-def _write_cache(catalog: Catalog) -> Path:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    out = _cache_path(Path(catalog.repo_path))
-    out.write_text(json.dumps(catalog.to_dict(), indent=2))
-    return out
-
-
 def cmd_build(args) -> int:
     repo_path = Path(args.repo).resolve()
     if not repo_path.is_dir():
         print(f"error: {repo_path} is not a directory", file=sys.stderr)
         return 1
     catalog = build_catalog(repo_path)
-    out = Path(args.out).resolve() if args.out else _cache_path(repo_path)
+    out = Path(args.out).resolve() if args.out else cache_path(repo_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(catalog.to_dict(), indent=2))
 
@@ -85,7 +50,7 @@ def cmd_build(args) -> int:
 
 
 def cmd_show(args) -> int:
-    catalog = _load_or_build(args.repo)
+    catalog = load_or_build(args.repo)
     if args.node:
         node = catalog.nodes.get(args.node)
         if not node:
@@ -125,7 +90,7 @@ def cmd_show(args) -> int:
 
 
 def cmd_graph(args) -> int:
-    catalog = _load_or_build(args.repo)
+    catalog = load_or_build(args.repo)
     print("```mermaid")
     print("graph LR")
     for name, node in sorted(catalog.nodes.items()):
@@ -141,7 +106,7 @@ def cmd_graph(args) -> int:
 
 
 def cmd_deps(args) -> int:
-    catalog = _load_or_build(args.repo)
+    catalog = load_or_build(args.repo)
     node = catalog.nodes.get(args.node)
     if not node:
         print(f"error: no node '{args.node}'. known: {', '.join(sorted(catalog.nodes))}",
