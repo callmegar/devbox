@@ -1,15 +1,16 @@
 # devbox
 
-A self-contained AWS dev environment as infrastructure-as-code, designed for working on a polyglot monorepo with the help of an LLM (Claude).
+A self-contained AWS dev environment, provisioned by OpenTofu + cloud-init, designed for working on a polyglot monorepo with the help of Claude (Code, plus an agent-orchestrator on top). Re-creatable from scratch in ~10 minutes; durable state lives on EBS + restic-encrypted S3 snapshots.
 
-A single `terraform apply` provisions an EC2 t3.xlarge with:
+A single `tofu apply` provisions an EC2 t3.xlarge with:
 
-- **Tools**: Docker, Python (+ `uv`), Node 22 LTS (+ pnpm/yarn), Terraform, AWS CLI v2, restic
-- **Code search**: Sourcegraph single-container on `localhost:7080`
-- **Portable state**: hourly `restic` snapshots of `~/repos`, `~/.claude`, dotfiles → S3
-- **Stable address**: Elastic IP so SSH config stays put across stop/start
-
-The catalog + MCP + Claude configuration layer is wired in next — this repo currently lands the infrastructure foundation those layers will sit on.
+- **Tools**: Docker, Python (+ `uv`), Node 22 LTS (+ pnpm/yarn), Terraform, AWS CLI v2, restic, tmux.
+- **Claude Code** (`claude`) — native install, subscription auth via copy-paste device-code flow.
+- **MCP layer** — `catalog-mcp` (devbox-owned, exposes a system catalog over the repo) and `sourcegraph-mcp` (wraps the local Sourcegraph). Registered at user scope in `~/.claude.json` so every `claude` session in any repo picks them up.
+- **Agent orchestrator** (`ao`) — parallel Claude workers in their own git worktrees, dashboard at `localhost:3000`, Slack + Linear integrations.
+- **Code search**: Sourcegraph single-container on `localhost:7080`.
+- **Portable state**: hourly `restic` snapshots of `~/repos`, `~/.claude`, `~/.config`, `~/.local`, `~/.agent-orchestrator` → S3. Survives `tofu destroy && tofu apply`.
+- **Stable address**: Elastic IP so SSH config stays put across stop/start.
 
 ---
 
@@ -17,105 +18,223 @@ The catalog + MCP + Claude configuration layer is wired in next — this repo cu
 
 ```
 devbox/
-├── Makefile                 # day-to-day commands (up, ssh, stop, start, status, logs)
+├── Makefile                 # day-to-day commands — `make help` lists targets
 ├── .env.example             # laptop-side env (AWS region, ssh key, etc.)
-├── terraform/
-│   ├── versions.tf          # provider pins
-│   ├── variables.tf         # tunables
-│   ├── main.tf              # VPC data lookups, EC2, EBS, EIP, SG
-│   ├── iam.tf               # instance role + SSM/S3 policies
-│   ├── s3.tf                # restic backup bucket (versioned, encrypted, lifecycle)
-│   ├── outputs.tf           # public IP, instance ID, ssh_config snippet
-│   └── terraform.tfvars.example
+├── terraform/               # OpenTofu IaC
 ├── bootstrap/
-│   └── cloud-init.yaml      # first-boot provisioning: tools, volumes, sourcegraph, restic
-├── cli/                     # `devbox` CLI (per-repo init, refresh) — placeholder
-├── mcp/                     # MCP servers (catalog, sourcegraph, postgres) — placeholder
-├── extractors/              # catalog auto-generators (pydeps, madge, etc.) — placeholder
-├── catalog-schema/          # service.yaml schema + invariants — placeholder
-└── systemd/                 # additional service units (catalog + MCP) — placeholder
+│   ├── cloud-init.yaml      # first-boot provisioning (everything below)
+│   └── scripts/             # SSM-pushed scripts: ssh-keys, sourcegraph code-host, ao config
+├── cli/
+│   ├── devbox_catalog/      # devbox CLI + catalog-mcp server
+│   ├── devbox_sourcegraph/  # sourcegraph-mcp server
+│   ├── devbox.sh            # /usr/local/bin/devbox wrapper
+│   ├── devbox-catalog-mcp.sh
+│   └── devbox-sourcegraph-mcp.sh
+└── catalog-schema/          # catalog JSON schema
 ```
-
-Files in the placeholder dirs will be added in subsequent passes; the infrastructure works without them.
 
 ---
 
-## Day 0: provision the box
+## Day 0 — provision the box
 
 One-time prerequisites on your laptop:
 
 ```bash
-# 0. Install: opentofu (tofu) >= 1.6 or terraform >= 1.6, awscli v2
-#    The Makefile uses `tofu` by default. Override with: make TF_BIN=terraform ...
-# 1. Configure AWS credentials (`aws configure`) for the account/region you'll use.
-# 2. Create an AWS EC2 key pair (or reuse one): the key_name must already exist.
+# OpenTofu (tofu) >= 1.6 and awscli v2 installed.
+# `aws configure` (or env vars) for the account + region you'll use.
+# An EC2 key pair pre-created in that region — its name goes in tfvars.
 
-cp .env.example .env                                      # edit values
-cp terraform/terraform.tfvars.example terraform/terraform.tfvars   # edit values
+cp .env.example .env                                              # edit values
+cp terraform/terraform.tfvars.example terraform/terraform.tfvars  # edit values
 ```
 
-The required variables are:
+Required variables:
 
 | Variable | Where | Notes |
 |---|---|---|
 | `aws_region` | tfvars + .env | Same in both |
 | `key_name` | tfvars | Pre-existing AWS EC2 key pair name |
-| `allowed_ssh_cidr` | tfvars | Run `curl -s ifconfig.me` then append `/32` |
-| `backup_bucket_name` | tfvars | Must be globally unique |
+| `allowed_ssh_cidr` | tfvars | `curl -s ifconfig.me` + `/32` |
+| `backup_bucket_name` | tfvars | Globally unique |
 | `SSH_PRIVATE_KEY` | .env | Path to the matching private key |
+| `BACKUP_BUCKET` | .env | Match `backup_bucket_name` from tfvars |
 
 Then:
 
 ```bash
-make set-restic-password   # one-time: stores a random password in SSM
-make init                  # terraform init
-make up                    # terraform apply
-make ssh-config >> ~/.ssh/config   # optional: drop-in SSH alias
+make set-restic-password   # one-time: stash a random restic password in SSM
+make init                  # tofu init
+make up                    # tofu apply  (cloud-init runs for ~5–10 min after)
+make ssh-config >> ~/.ssh/config    # optional: drop-in `ssh devbox` alias
+make logs                  # tail /var/log/devbox-setup.log on the box
 ```
 
-Cloud-init runs for 5–10 minutes after `apply`. Track it with `make logs`.
+Cloud-init installs everything in the "tools" list above. Watch `make logs` until it reports `setup-* steps complete`.
 
 ---
 
-## Day 1: bring a repo onto the box
+## Day 1 — secrets, integrations, first login
+
+The box ships ready to *boot* but most integrations need credentials you mint by hand and stash in SSM. Each `upload-*` target prompts (hidden input) and stores under `/devbox/...` SecureString.
+
+### One-time secrets
 
 ```bash
-make ssh                   # or: ssh devbox (if you ran make ssh-config)
+# Outbound GitLab SSH key — for git clone over ssh from the box.
+# Uploads ~/.ssh/cbakon{,.pub} (override with KEY_FILE=).
+make upload-gitlab-key
+make sync-ssh-keys                    # install onto the running box
 
-# on the box:
-cd ~/repos
-git clone git@github.com:you/app-monorepo.git
-cd app-monorepo
-# … (devbox init for catalog/sourcegraph/MCP setup — added in next pass)
+# Sourcegraph admin token.
+#   make tunnel (in another terminal) → open http://localhost:7080 →
+#   sign up / sign in → avatar → Settings → Access tokens → generate.
+make upload-sourcegraph-token
+
+# GitLab personal access token (read_api + read_repository scopes).
+#   https://gitlab.com/-/user_settings/personal_access_tokens
+make upload-gitlab-api-token
+
+# Linear personal API key (for ao's Linear tracker plugin).
+#   https://linear.app/settings/api
+make upload-linear-api-token
+
+# Slack incoming webhook URL.
+#   https://api.slack.com/apps → Create App → Incoming Webhooks →
+#   Add to Workspace → pick the channel → copy URL.
+make upload-slack-webhook
 ```
 
-The `~/repos` directory lives on the data EBS volume and is auto-backed up to S3.
+### Wire up code search
+
+```bash
+# Tell Sourcegraph to clone + index a GitLab repo. Repeat to add more.
+make configure-sourcegraph-gitlab REPOS=match2160244/match
+
+# Watch the clone complete (~30s for a small repo).
+make sourcegraph-repos      # expect cloned=True
+
+# Pin sourcegraph-mcp queries to a default repo + working branch so
+# `find_symbol("Foo")` doesn't need explicit repo:/rev: filters.
+make set-sourcegraph-default-repo REPO=match2160244/match
+make set-sourcegraph-default-rev REV=develop
+```
+
+### Wire up agent-orchestrator + notifiers + tracker
+
+```bash
+# On the box (e.g. via `make ssh`):
+cd ~/repos/match
+ao start          # auto-generates agent-orchestrator.yaml on first run
+                  # (do this once; `ao start` again later picks up the existing config)
+```
+
+From your laptop:
+
+```bash
+# Merge Slack notifier (global config) + Linear tracker (per-project) +
+# pin defaultBranch. Idempotent — re-run safely after editing.
+make init-ao-config TEAM=MAT BRANCH=develop
+```
+
+The Slack webhook lands in `~/.agent-orchestrator/config.yaml` (user-scope on the box, never committed). The Linear team key gets resolved to its UUID via the Linear GraphQL API. The per-project YAML in match's repo ends up with just `tracker:` + `agentRules:`.
+
+### Claude Code first login
+
+```bash
+make ssh
+
+# on the box
+claude
+# Press 'c' to copy the login URL → open it on your laptop → sign in to
+# claude.ai → paste the code Claude shows you back into the ssh session.
+```
+
+`~/.claude/.credentials.json` is written; restic backs it up. Re-creating the box from scratch (`tofu destroy && tofu apply`) restores it via restic — no re-login needed.
+
+### Open the dashboards (optional)
+
+```bash
+# Laptop side. Tunnels Sourcegraph (7080), ao (3000), MCP scratch (6070).
+make tunnel
+# Browse:  http://localhost:7080  (Sourcegraph)
+#          http://localhost:3000  (ao dashboard)
+```
 
 ---
 
-## Day 2+: normal flow
+## Day 2+ — normal flow
 
 ```bash
 make start          # if you stopped the box overnight
 make ssh
-# ... work ...
+# ... work — `claude` for solo sessions; `ao` for multi-worker on issues ...
 make stop           # release compute cost (preserves EBS state)
 ```
 
-When the box stops, a shutdown systemd unit runs one final restic backup. When it starts, your state is already on the EBS volume — no restore needed unless the volume is destroyed.
-
-Trigger a manual backup anytime:
+A systemd unit runs one last restic backup on shutdown. On startup, your EBS state is already there — no restore needed unless the volume was destroyed.
 
 ```bash
-make backup-now
-make snapshots
+make backup-now     # trigger restic backup
+make snapshots      # list restic snapshots
+make status         # ec2 state + EIP
+make logs           # tail cloud-init/setup logs
 ```
+
+---
+
+## The layers, briefly
+
+**Catalog** (`devbox catalog ...` on the box, plus `catalog-mcp`)
+- Discovers Python backend modules, frontends, Terraform stacks, GitLab CI jobs, Alembic migrations.
+- Maps DB schemas to owning modules, computes blast radius via reverse-dep edges.
+- Cached at `~/.devbox/catalog/<repo>.json`; rebuild on demand with `devbox catalog build`.
+- Exposed to Claude via MCP tools: `catalog_overview`, `get_node`, `find_dependents`, `impact_of_change`, `find_node_for_file`, `db_schema_map`.
+
+**Sourcegraph-MCP** (`sourcegraph-mcp`)
+- Wraps the box-local Sourcegraph (localhost:7080) over GraphQL.
+- Tools: `code_search`, `find_symbol`, `find_references`.
+- Default repo + rev auto-injected from SSM; per-query override via `repo:` / `rev:` filters.
+
+**Agent orchestrator** (`ao`)
+- Spawns parallel Claude Code workers in their own git worktrees + branches.
+- Issue source: Linear (or GitHub/GitLab). Notifiers: Slack, desktop, others. Dashboard at `localhost:3000`.
+- Orchestrator session is read-only; worker sessions own implementation + PRs.
+- All MCPs available in every spawned session automatically (they're registered at user scope, not per-project).
+
+---
+
+## SSM secrets reference
+
+Everything sensitive lives in SSM SecureString under `/devbox/*`, fetched at runtime by the EC2 instance role. Nothing in this repo or in match's repo holds credentials.
+
+| Name | Set with | Used by |
+|---|---|---|
+| `/devbox/restic-password` | `make set-restic-password` | restic backup/restore |
+| `/devbox/ssh-keys/gitlab[.pub]` | `make upload-gitlab-key` + `make sync-ssh-keys` | outbound git clone over ssh |
+| `/devbox/sourcegraph-token` | `make upload-sourcegraph-token` | sourcegraph-mcp wrapper |
+| `/devbox/gitlab-api-token` | `make upload-gitlab-api-token` | `configure-sourcegraph-gitlab` |
+| `/devbox/sourcegraph-default-repo` | `make set-sourcegraph-default-repo` | sourcegraph-mcp wrapper |
+| `/devbox/sourcegraph-default-rev` | `make set-sourcegraph-default-rev` | sourcegraph-mcp wrapper |
+| `/devbox/slack-webhook-url` | `make upload-slack-webhook` | ao wrapper + `init-ao-config` |
+| `/devbox/linear-api-key` | `make upload-linear-api-token` | ao wrapper + `init-ao-config` |
+
+---
+
+## Recovering from a disaster
+
+If the EBS volume is destroyed but the S3 bucket survives:
+
+1. `make destroy` (or delete the EC2 + EBS in the console).
+2. `make up` — fresh box; cloud-init's `restic-restore.sh` finds the snapshots and pulls them down to the new data volume.
+3. SSH in — `~/repos`, `~/.claude`, `~/.agent-orchestrator` are exactly as you left them. Claude Code is still logged in. Sourcegraph + ao restart from where they were.
+
+**The restic password in SSM is the one piece you cannot afford to lose.** Back it up to a password manager. (Everything else can be re-minted; restic-encrypted snapshots without the password are bricked.)
 
 ---
 
 ## Cost
 
-Rough monthly numbers (us-east-1, May 2026 pricing):
+Rough monthly numbers:
 
 | Component | Cost |
 |---|---|
@@ -129,18 +248,6 @@ The `make stop` / `make start` workflow is the biggest lever. Treat the box as e
 
 ---
 
-## Recovering from a disaster
-
-If the EBS volume is destroyed but the S3 bucket survives:
-
-1. `make destroy` (or just delete the EC2 + EBS in the console)
-2. `make up` — a fresh box provisions, cloud-init's `restic-restore.sh` finds the snapshots and pulls them down to the new data volume.
-3. SSH in — `~/repos` and `~/.claude` are exactly as you left them.
-
-The restic password in SSM is the **one piece you cannot afford to lose**. Back it up to a password manager.
-
----
-
 ## Security posture
 
 - SSH locked to a single CIDR (your IP). Override with care.
@@ -148,14 +255,5 @@ The restic password in SSM is the **one piece you cannot afford to lose**. Back 
 - SSM Session Manager enabled as an SSH fallback (so a CIDR mistake doesn't lock you out).
 - All EBS volumes encrypted at rest.
 - S3 backup bucket: versioned, encrypted, public-access blocked, lifecycle-managed.
-- No secrets in this repo. API keys go in SSM under `/devbox/*` and are pulled at runtime via the instance role.
-
----
-
-## Roadmap (next passes)
-
-- `cli/devbox` — per-repo bootstrap (`devbox init` for catalog + sourcegraph + MCP wiring)
-- `catalog-schema/` — `service.yaml` schema + invariants
-- `extractors/` — Python/Node/Terraform/DB extractors that populate `auto.yaml`
-- `mcp/` — catalog-mcp, sourcegraph-mcp, postgres-mcp, terraform-mcp
-- Claude Code config: project-specific MCP registration and prompt scaffolding
+- No secrets in this repo or in match's repo — everything in SSM under `/devbox/*`, pulled at runtime via the instance role.
+- Sourcegraph and ao bound to `127.0.0.1` only — reach via `make tunnel`.
