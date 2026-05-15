@@ -58,7 +58,7 @@ write_files:
       # setup-user runs early (right after mount-data) so the ~/.local, ~/.config
       # etc. symlinks point at the data volume BEFORE any tool installs into them
       # (e.g. uv writing to ~/.local/bin). Reordering this is load-bearing.
-      STEPS=(mount-data setup-user install-docker install-node install-python install-terraform install-restic install-claude-code install-sourcegraph setup-ssh-keys restic-restore enable-services)
+      STEPS=(mount-data setup-user install-docker install-node install-python install-terraform install-restic install-claude-code install-ao install-sourcegraph setup-ssh-keys restic-restore enable-services)
       log() { echo "[setup $(date -Iseconds)] $*"; }
       run_step() {
         local step="$1"
@@ -211,6 +211,24 @@ write_files:
       fi
       sudo -u "$DEVBOX_USER" bash -lc 'curl -fsSL https://claude.ai/install.sh | bash'
 
+  # -- Step: install agent-orchestrator (`ao`) ---------------------------------
+  # Spawns parallel Claude Code workers, each in its own git worktree, and
+  # routes them at issues from GitHub/GitLab/Linear. Worker processes are
+  # plain `claude` subprocesses — they inherit the user-scope MCP servers
+  # registered in ~/.claude.json, so the catalog + sourcegraph MCPs are
+  # available in every spawned session with no per-session wiring. Runtime
+  # state lives under ~/.agent-orchestrator (symlinked to the data volume
+  # by setup-user, so it survives box rebuilds via restic).
+  - path: /opt/devbox/scripts/install-ao.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      if command -v ao >/dev/null 2>&1 && ao --version >/dev/null 2>&1; then
+        exit 0
+      fi
+      npm install -g @aoagents/ao
+
   # -- Step: install Sourcegraph (single-container) ----------------------------
   - path: /opt/devbox/scripts/install-sourcegraph.sh
     permissions: "0755"
@@ -264,11 +282,12 @@ write_files:
         "$DATA_MOUNT/home/.claude" \
         "$DATA_MOUNT/home/.config" \
         "$DATA_MOUNT/home/.local" \
-        "$DATA_MOUNT/home/.devbox"
+        "$DATA_MOUNT/home/.devbox" \
+        "$DATA_MOUNT/home/.agent-orchestrator"
       # Symlink them into the user's home (idempotent).
       sudo -u "$DEVBOX_USER" bash -c '
         cd ~
-        for d in repos .claude .config .local .devbox; do
+        for d in repos .claude .config .local .devbox .agent-orchestrator; do
           if [[ -e "$d" && ! -L "$d" ]]; then mv "$d" "$d.pre-devbox.$(date +%s)" || true; fi
           ln -sfn '"$DATA_MOUNT"'/home/$d $d
         done

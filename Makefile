@@ -244,9 +244,10 @@ ssh-config: ## Print drop-in ~/.ssh/config block
 	@$(TF) output -raw ssh_config
 
 .PHONY: tunnel
-tunnel: ## SSH tunnel: Sourcegraph (7080), MCP scratch ports
+tunnel: ## SSH tunnel: Sourcegraph (7080), ao dashboard (3000), MCP scratch ports
 	ssh -i $(SSH_PRIVATE_KEY) -N \
 		-L 7080:localhost:7080 \
+		-L 3000:localhost:3000 \
 		-L 6070:localhost:6070 \
 		ubuntu@$(PUBLIC_IP)
 
