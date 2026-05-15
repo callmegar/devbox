@@ -57,6 +57,50 @@ upload-sourcegraph-token: ## Upload a Sourcegraph access token to SSM (TOKEN=...
 	echo "Stored /devbox/sourcegraph-token in SSM ($(AWS_REGION))."; \
 	echo "Mint one via: make tunnel  ->  http://localhost:7080  ->  Settings -> Access tokens."
 
+.PHONY: upload-gitlab-api-token
+upload-gitlab-api-token: ## Upload a GitLab personal access token to SSM (TOKEN=... or interactive prompt). Needs scopes: read_api, read_repository.
+	@if [ -n "$(TOKEN)" ]; then \
+	  T="$(TOKEN)"; \
+	else \
+	  read -p "GitLab personal access token (read_api + read_repository): " -s T; echo; \
+	fi; \
+	if [ -z "$$T" ]; then echo "no token provided"; exit 1; fi; \
+	aws ssm put-parameter --name /devbox/gitlab-api-token --type SecureString --overwrite \
+		--value "$$T" --region $(AWS_REGION) >/dev/null; \
+	echo "Stored /devbox/gitlab-api-token in SSM ($(AWS_REGION))."; \
+	echo "Mint one via: https://gitlab.com/-/user_settings/personal_access_tokens"
+
+.PHONY: configure-sourcegraph-gitlab
+configure-sourcegraph-gitlab: SCRIPT = bootstrap/scripts/configure-sourcegraph-gitlab.py
+configure-sourcegraph-gitlab: REMOTE = /opt/devbox/scripts/configure-sourcegraph-gitlab.py
+configure-sourcegraph-gitlab: GITLAB_URL ?= https://gitlab.com
+configure-sourcegraph-gitlab: ## Register GitLab repos with Sourcegraph (REPOS="namespace/repo [..]" [GITLAB_URL=...])
+	@if [ -z "$(REPOS)" ]; then echo "usage: make configure-sourcegraph-gitlab REPOS=\"namespace/repo [namespace/repo2 ...]\""; exit 1; fi
+	@[ -f $(SCRIPT) ] || (echo "$(SCRIPT) not found"; exit 1)
+	@B64=$$(base64 < $(SCRIPT) | tr -d '\n'); \
+	printf '%s\n' \
+	  '{"commands":[' \
+	  '"sudo mkdir -p /opt/devbox/scripts",' \
+	  "\"echo $$B64 | base64 -d | sudo tee $(REMOTE) > /dev/null\"," \
+	  "\"sudo chmod 0755 $(REMOTE)\"," \
+	  "\"sudo -u ubuntu env AWS_REGION=$(AWS_REGION) python3 $(REMOTE) --url $(GITLAB_URL) $(REPOS)\"" \
+	  ']}' > /tmp/devbox-cfg-sg.json
+	@CMD=$$(aws ssm send-command --region $(AWS_REGION) --instance-ids $(INSTANCE_ID) --document-name AWS-RunShellScript --parameters file:///tmp/devbox-cfg-sg.json --query Command.CommandId --output text); \
+	echo "command: $$CMD"; \
+	aws ssm wait command-executed --region $(AWS_REGION) --command-id $$CMD --instance-id $(INSTANCE_ID) || true; \
+	aws ssm get-command-invocation --region $(AWS_REGION) --command-id $$CMD --instance-id $(INSTANCE_ID) --query StandardOutputContent --output text
+
+.PHONY: sourcegraph-repos
+sourcegraph-repos: SCRIPT = bootstrap/scripts/list-sourcegraph-repos.sh
+sourcegraph-repos: REMOTE = /opt/devbox/scripts/list-sourcegraph-repos.sh
+sourcegraph-repos: ## List repos Sourcegraph has cloned/indexed
+	@[ -f $(SCRIPT) ] || (echo "$(SCRIPT) not found"; exit 1)
+	@B64=$$(base64 < $(SCRIPT) | tr -d '\n'); \
+	JSON=$$(printf '{"commands":["sudo mkdir -p /opt/devbox/scripts","echo %s | base64 -d | sudo tee %s > /dev/null","sudo chmod 0755 %s","sudo -u ubuntu %s"]}' "$$B64" "$(REMOTE)" "$(REMOTE)" "$(REMOTE)"); \
+	CMD=$$(aws ssm send-command --region $(AWS_REGION) --instance-ids $(INSTANCE_ID) --document-name AWS-RunShellScript --parameters "$$JSON" --query Command.CommandId --output text); \
+	aws ssm wait command-executed --region $(AWS_REGION) --command-id $$CMD --instance-id $(INSTANCE_ID) || true; \
+	aws ssm get-command-invocation --region $(AWS_REGION) --command-id $$CMD --instance-id $(INSTANCE_ID) --query StandardOutputContent --output text
+
 .PHONY: upload-gitlab-key
 upload-gitlab-key: KEY_FILE ?= ~/.ssh/cbakon
 upload-gitlab-key: ## Upload GitLab SSH key (private+public) to SSM under /devbox/ssh-keys/gitlab
