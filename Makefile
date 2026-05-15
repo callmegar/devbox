@@ -57,6 +57,27 @@ upload-sourcegraph-token: ## Upload a Sourcegraph access token to SSM (TOKEN=...
 	echo "Stored /devbox/sourcegraph-token in SSM ($(AWS_REGION))."; \
 	echo "Mint one via: make tunnel  ->  http://localhost:7080  ->  Settings -> Access tokens."
 
+.PHONY: init-ao-config
+init-ao-config: SCRIPT = bootstrap/scripts/init-ao-config.py
+init-ao-config: REMOTE = /opt/devbox/scripts/init-ao-config.py
+init-ao-config: REPO ?= /home/ubuntu/repos/match
+init-ao-config: CHANNEL ?= '\#agent-updates'
+init-ao-config: ## Merge Slack notifier (global) + Linear tracker (per-project) into ao config (TEAM=MAT [REPO=...] [CHANNEL='#...'])
+	@if [ -z "$(TEAM)" ]; then echo "usage: make init-ao-config TEAM=<linear-team-key> [REPO=path] [CHANNEL='#chan']"; exit 1; fi
+	@[ -f $(SCRIPT) ] || (echo "$(SCRIPT) not found"; exit 1)
+	@B64=$$(base64 < $(SCRIPT) | tr -d '\n'); \
+	printf '%s\n' \
+	  '{"commands":[' \
+	  '"sudo mkdir -p /opt/devbox/scripts",' \
+	  "\"echo $$B64 | base64 -d | sudo tee $(REMOTE) > /dev/null\"," \
+	  "\"sudo chmod 0755 $(REMOTE)\"," \
+	  "\"sudo -u ubuntu env AWS_REGION=$(AWS_REGION) /home/ubuntu/.local/bin/uv run --script $(REMOTE) --team $(TEAM) --repo $(REPO) --channel $(CHANNEL)\"" \
+	  ']}' > /tmp/devbox-init-ao.json
+	@CMD=$$(aws ssm send-command --region $(AWS_REGION) --instance-ids $(INSTANCE_ID) --document-name AWS-RunShellScript --parameters file:///tmp/devbox-init-ao.json --query Command.CommandId --output text); \
+	echo "command: $$CMD"; \
+	aws ssm wait command-executed --region $(AWS_REGION) --command-id $$CMD --instance-id $(INSTANCE_ID) || true; \
+	aws ssm get-command-invocation --region $(AWS_REGION) --command-id $$CMD --instance-id $(INSTANCE_ID) --query StandardOutputContent --output text
+
 .PHONY: upload-linear-api-token
 upload-linear-api-token: ## Upload a Linear personal API key to SSM (TOKEN=... or interactive prompt). Wrapper at /usr/local/bin/ao exports it as LINEAR_API_KEY.
 	@if [ -n "$(TOKEN)" ]; then \
