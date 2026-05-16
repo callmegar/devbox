@@ -133,6 +133,25 @@ set-sourcegraph-default-rev: ## Pin sourcegraph-mcp searches to a default branch
 	  echo "Stored /devbox/sourcegraph-default-rev=$(REV). sourcegraph-mcp queries now inject rev:$(REV) by default."; \
 	fi
 
+.PHONY: upload-aws-credentials
+upload-aws-credentials: AWS_LOCAL_PROFILE ?= pablo
+upload-aws-credentials: ## Upload AWS keys to SSM for the box's pablo profile. Auto-pulls from local ~/.aws (AWS_LOCAL_PROFILE=pablo); override with TOKEN=AKIA... SECRET=...
+	@if [ -n "$(TOKEN)" ] && [ -n "$(SECRET)" ]; then \
+	  K="$(TOKEN)"; S="$(SECRET)"; SRC="overrides"; \
+	else \
+	  K=$$(aws configure get aws_access_key_id --profile $(AWS_LOCAL_PROFILE) 2>/dev/null || true); \
+	  S=$$(aws configure get aws_secret_access_key --profile $(AWS_LOCAL_PROFILE) 2>/dev/null || true); \
+	  SRC="local profile '$(AWS_LOCAL_PROFILE)'"; \
+	fi; \
+	if [ -z "$$K" ] || [ -z "$$S" ]; then \
+	  echo "no credentials found. Pass TOKEN=AKIA... SECRET=... or configure profile $(AWS_LOCAL_PROFILE) in ~/.aws/credentials"; \
+	  exit 1; \
+	fi; \
+	aws ssm put-parameter --name /devbox/aws-access-key-id     --type SecureString --overwrite --value "$$K" --region $(AWS_REGION) >/dev/null; \
+	aws ssm put-parameter --name /devbox/aws-secret-access-key --type SecureString --overwrite --value "$$S" --region $(AWS_REGION) >/dev/null; \
+	echo "Stored /devbox/aws-access-key-id + /devbox/aws-secret-access-key in SSM ($(AWS_REGION)) from $$SRC."; \
+	echo "The box resolves these via credential_process when AWS_PROFILE=pablo."
+
 .PHONY: upload-gitlab-api-token
 upload-gitlab-api-token: ## Upload a GitLab personal access token to SSM (TOKEN=... or interactive prompt). Min scopes: read_api+read_repository for indexing; api for `glab mr create`.
 	@if [ -n "$(TOKEN)" ]; then \

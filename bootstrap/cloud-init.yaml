@@ -58,7 +58,7 @@ write_files:
       # setup-user runs early (right after mount-data) so the ~/.local, ~/.config
       # etc. symlinks point at the data volume BEFORE any tool installs into them
       # (e.g. uv writing to ~/.local/bin). Reordering this is load-bearing.
-      STEPS=(mount-data setup-user install-docker install-node install-python install-tofu install-restic install-claude-code install-closedloop install-ao install-sourcegraph setup-ssh-keys restic-restore enable-services)
+      STEPS=(mount-data setup-user install-aws-profile install-docker install-node install-python install-tofu install-restic install-claude-code install-closedloop install-ao install-sourcegraph setup-ssh-keys restic-restore enable-services)
       log() { echo "[setup $(date -Iseconds)] $*"; }
       run_step() {
         local step="$1"
@@ -179,6 +179,14 @@ write_files:
         unzip -q /tmp/awscliv2.zip -d /tmp
         /tmp/aws/install
         rm -rf /tmp/aws /tmp/awscliv2.zip
+      fi
+      # session-manager-plugin — needed for `aws ssm start-session ...`
+      # port-forwarding (match's scripts/db-tunnel.sh and similar tunnels
+      # into private RDS / ECS resources rely on it). Travels with AWS CLI.
+      if ! command -v session-manager-plugin >/dev/null; then
+        curl -fsSL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o /tmp/session-manager-plugin.deb
+        dpkg -i /tmp/session-manager-plugin.deb
+        rm -f /tmp/session-manager-plugin.deb
       fi
       # Write restic env for systemd units. RESTIC_PASSWORD comes from SSM at run-time.
       cat > /etc/restic.env <<EOF
@@ -335,6 +343,52 @@ write_files:
           ln -sfn '"$DATA_MOUNT"'/home/$d $d
         done
       '
+
+  # -- File: AWS credential_process fetch script ------------------------------
+  # Resolves the `pablo` IAM user's keys from SSM SecureString and prints them
+  # in the AWS-SDK JSON shape. Wired in ~/.aws/config under [profile pablo] via
+  # credential_process. Body lives in bootstrap/scripts/devbox-aws-credentials.sh
+  # (single source of truth — re-run install-aws-profile to refresh on the box).
+  - path: /usr/local/bin/devbox-aws-credentials
+    permissions: "0755"
+    content: |
+      ${indent(6, aws_credentials_script)}
+
+  # -- File: AWS profile login-shell hook -------------------------------------
+  # Auto-exports AWS_PROFILE=pablo for interactive logins so aws/tofu/SDK calls
+  # resolve to the pablo IAM user (which has access to match's S3 backend that
+  # the instance role does not). systemd / non-login contexts (cloud-init,
+  # restic-backup.service, ao wrapper) keep using the instance role.
+  - path: /etc/profile.d/devbox-aws-profile.sh
+    permissions: "0644"
+    content: |
+      if [ -r /home/ubuntu/.aws/config ]; then
+        export AWS_PROFILE=pablo
+      fi
+
+  # -- Step: install pablo AWS profile for ubuntu -----------------------------
+  # Drops [default] and [profile pablo] into ~ubuntu/.aws/config. Must run
+  # after setup-user (which sets up the ubuntu home layout). The fetch script
+  # and profile.d hook are written via write_files above (no install needed).
+  # Upload the keys with `make upload-aws-credentials` from the laptop.
+  - path: /opt/devbox/scripts/install-aws-profile.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      source /opt/devbox/env
+      install -d -m 0700 -o "$DEVBOX_USER" -g "$DEVBOX_USER" \
+        "/home/$DEVBOX_USER/.aws"
+      cat > "/home/$DEVBOX_USER/.aws/config" <<EOF
+      [default]
+      region = $AWS_REGION
+
+      [profile pablo]
+      region = $AWS_REGION
+      credential_process = /usr/local/bin/devbox-aws-credentials
+      EOF
+      chown "$DEVBOX_USER:$DEVBOX_USER" "/home/$DEVBOX_USER/.aws/config"
+      chmod 0600 "/home/$DEVBOX_USER/.aws/config"
 
   # -- Step: fetch outbound SSH keys from SSM ---------------------------------
   # Per-host private keys live in SSM SecureString under /devbox/ssh-keys/<name>

@@ -54,6 +54,7 @@ locals {
     install_closedloop_script = file("${path.module}/../bootstrap/scripts/install-closedloop.sh")
     setup_tmux_script         = file("${path.module}/../bootstrap/scripts/setup-tmux.sh")
     devbox_tmux_attach_script = file("${path.module}/../bootstrap/scripts/devbox-tmux-attach.sh")
+    aws_credentials_script    = file("${path.module}/../bootstrap/scripts/devbox-aws-credentials.sh")
   })
 }
 
