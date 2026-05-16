@@ -58,7 +58,7 @@ write_files:
       # setup-user runs early (right after mount-data) so the ~/.local, ~/.config
       # etc. symlinks point at the data volume BEFORE any tool installs into them
       # (e.g. uv writing to ~/.local/bin). Reordering this is load-bearing.
-      STEPS=(mount-data setup-user install-docker install-node install-python install-terraform install-restic install-claude-code install-ao install-sourcegraph setup-ssh-keys restic-restore enable-services)
+      STEPS=(mount-data setup-user install-docker install-node install-python install-tofu install-restic install-claude-code install-ao install-sourcegraph setup-ssh-keys restic-restore enable-services)
       log() { echo "[setup $(date -Iseconds)] $*"; }
       run_step() {
         local step="$1"
@@ -149,18 +149,20 @@ write_files:
         sudo -u "$DEVBOX_USER" bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
       fi
 
-  # -- Step: install Terraform CLI --------------------------------------------
-  - path: /opt/devbox/scripts/install-terraform.sh
+  # -- Step: install OpenTofu CLI ---------------------------------------------
+  # Uses OpenTofu (`tofu`), not HashiCorp Terraform — matches the user's
+  # laptop choice. The official installer adds the OpenTofu apt repo and
+  # installs `tofu`. Idempotent (skips if already present).
+  - path: /opt/devbox/scripts/install-tofu.sh
     permissions: "0755"
     content: |
       #!/usr/bin/env bash
       set -euo pipefail
-      command -v terraform >/dev/null && exit 0
-      wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-      echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
-        > /etc/apt/sources.list.d/hashicorp.list
-      apt-get update -y
-      apt-get install -y terraform
+      command -v tofu >/dev/null && exit 0
+      curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh
+      chmod +x /tmp/install-opentofu.sh
+      /tmp/install-opentofu.sh --install-method deb
+      rm -f /tmp/install-opentofu.sh
 
   # -- Step: install restic + AWS CLI v2 --------------------------------------
   - path: /opt/devbox/scripts/install-restic.sh
