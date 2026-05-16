@@ -4,10 +4,11 @@ A self-contained AWS dev environment, provisioned by OpenTofu + cloud-init, desi
 
 A single `tofu apply` provisions an EC2 t3.xlarge with:
 
-- **Tools**: Docker, Python (+ `uv`), Node 22 LTS (+ pnpm/yarn), Terraform, AWS CLI v2, restic, tmux.
-- **Claude Code** (`claude`) — native install, subscription auth via copy-paste device-code flow.
-- **MCP layer** — `catalog-mcp` (devbox-owned, exposes a system catalog over the repo) and `sourcegraph-mcp` (wraps the local Sourcegraph). Registered at user scope in `~/.claude.json` so every `claude` session in any repo picks them up.
-- **Agent orchestrator** (`ao`) — parallel Claude workers in their own git worktrees, dashboard at `localhost:3000`, Slack + Linear integrations.
+- **Tools**: Docker, Python (+ `uv`), Node 22 LTS (+ pnpm/yarn), OpenTofu (`tofu`), AWS CLI v2 (+ `session-manager-plugin` for SSM port-forwards), restic, tmux.
+- **Claude Code** (`claude`) — native install, subscription auth via copy-paste device-code flow. Six closedloop-ai plugins (`bootstrap`, `code`, `code-review`, `judges`, `platform`, `self-learning`) install automatically at user scope — `/code:code`, `/ultrareview`, and friends are available in every session.
+- **MCP layer** — `catalog-mcp` (system catalog over the repo), `sourcegraph-mcp` (wraps local Sourcegraph), and `devbox-linear-mcp` (Linear issue CRUD with first-class blocker/blocked-by relations). Registered at user scope in `~/.claude.json` so every `claude` session in any repo picks them up.
+- **Agent orchestrator** (`ao`) — parallel Claude workers in their own git worktrees, dashboard at `localhost:3000`, Slack + Linear integrations. Workers get `GITLAB_TOKEN` pre-exported so `glab mr create` works without setup.
+- **Devbox tmux session** — interactive SSH logins auto-attach to a 4-pane `devbox` session under `/data/home/repos/<your-repo>`. Opt out per-session with `DEVBOX_NO_TMUX=1`.
 - **Code search**: Sourcegraph single-container on `localhost:7080`.
 - **Portable state**: hourly `restic` snapshots of `~/repos`, `~/.claude`, `~/.config`, `~/.local`, `~/.agent-orchestrator` → S3. Survives `tofu destroy && tofu apply`.
 - **Stable address**: Elastic IP so SSH config stays put across stop/start.
@@ -27,9 +28,11 @@ devbox/
 ├── cli/
 │   ├── devbox_catalog/      # devbox CLI + catalog-mcp server
 │   ├── devbox_sourcegraph/  # sourcegraph-mcp server
+│   ├── devbox_linear/       # devbox-linear-mcp server
 │   ├── devbox.sh            # /usr/local/bin/devbox wrapper
 │   ├── devbox-catalog-mcp.sh
-│   └── devbox-sourcegraph-mcp.sh
+│   ├── devbox-sourcegraph-mcp.sh
+│   └── devbox-linear-mcp.sh
 └── catalog-schema/          # catalog JSON schema
 ```
 
@@ -40,7 +43,7 @@ devbox/
 One-time prerequisites on your laptop:
 
 ```bash
-# OpenTofu (tofu) >= 1.6 and awscli v2 installed.
+# OpenTofu (tofu) >= 1.6 and awscli v2 installed on your laptop.
 # `aws configure` (or env vars) for the account + region you'll use.
 # An EC2 key pair pre-created in that region — its name goes in tfvars.
 
@@ -94,14 +97,24 @@ make upload-sourcegraph-token
 #   https://gitlab.com/-/user_settings/personal_access_tokens
 make upload-gitlab-api-token
 
-# Linear personal API key (for ao's Linear tracker plugin).
+# Linear personal API key (for ao's Linear tracker plugin and devbox-linear-mcp).
 #   https://linear.app/settings/api
 make upload-linear-api-token
+
+# Default Linear team key — lets devbox-linear-mcp omit `team=` in tool calls.
+make upload-linear-default-team TEAM=ABC
 
 # Slack incoming webhook URL.
 #   https://api.slack.com/apps → Create App → Incoming Webhooks →
 #   Add to Workspace → pick the channel → copy URL.
 make upload-slack-webhook
+
+# (Optional) AWS keys for a named IAM user the box should act as. The box's
+# instance role is intentionally narrow; if you need to reach AWS resources
+# it can't touch (e.g. a private S3 backend), upload that user's keys and
+# the box will resolve them via credential_process under `[profile pablo]`.
+# Auto-pulls from your laptop's ~/.aws (override with TOKEN=AKIA... SECRET=...).
+make upload-aws-credentials
 ```
 
 ### Wire up code search
@@ -154,10 +167,11 @@ claude
 ### Open the dashboards (optional)
 
 ```bash
-# Laptop side. Tunnels Sourcegraph (7080), ao (3000), MCP scratch (6070).
+# Laptop side. Tunnels Sourcegraph (7080), ao dashboard (3000) + ao
+# terminal WebSocket (14800/14801), and MCP scratch (6070).
 make tunnel
 # Browse:  http://localhost:7080  (Sourcegraph)
-#          http://localhost:3000  (ao dashboard)
+#          http://localhost:3000  (ao dashboard — terminal panes work via 14800/14801)
 ```
 
 ---
@@ -166,7 +180,8 @@ make tunnel
 
 ```bash
 make start          # if you stopped the box overnight
-make ssh
+make ssh            # lands you in a 4-pane `devbox` tmux session by default
+                    # (Ctrl-b d to detach; DEVBOX_NO_TMUX=1 ssh ... to skip)
 # ... work — `claude` for solo sessions; `ao` for multi-worker on issues ...
 make stop           # release compute cost (preserves EBS state)
 ```
@@ -195,6 +210,11 @@ make logs           # tail cloud-init/setup logs
 - Tools: `code_search`, `find_symbol`, `find_references`.
 - Default repo + rev auto-injected from SSM; per-query override via `repo:` / `rev:` filters.
 
+**Devbox-Linear-MCP** (`devbox-linear-mcp`)
+- Linear issue CRUD with first-class blocker/blocked-by relations.
+- Tools: `create_issue` (with optional `blockers=[...]`), `link_blocks`, `list_issues`, `get_issue`, plus comment/state/assignee helpers.
+- Default team key auto-injected from SSM (`make upload-linear-default-team TEAM=...`).
+
 **Agent orchestrator** (`ao`)
 - Spawns parallel Claude Code workers in their own git worktrees + branches.
 - Issue source: Linear (or GitHub/GitLab). Notifiers: Slack, desktop, others. Dashboard at `localhost:3000`.
@@ -212,11 +232,14 @@ Everything sensitive lives in SSM SecureString under `/devbox/*`, fetched at run
 | `/devbox/restic-password` | `make set-restic-password` | restic backup/restore |
 | `/devbox/ssh-keys/gitlab[.pub]` | `make upload-gitlab-key` + `make sync-ssh-keys` | outbound git clone over ssh |
 | `/devbox/sourcegraph-token` | `make upload-sourcegraph-token` | sourcegraph-mcp wrapper |
-| `/devbox/gitlab-api-token` | `make upload-gitlab-api-token` | `configure-sourcegraph-gitlab` |
+| `/devbox/gitlab-api-token` | `make upload-gitlab-api-token` | `configure-sourcegraph-gitlab` (indexing) + ao wrapper exports it as `GITLAB_TOKEN`/`GL_TOKEN` so workers can `glab mr create` |
 | `/devbox/sourcegraph-default-repo` | `make set-sourcegraph-default-repo` | sourcegraph-mcp wrapper |
 | `/devbox/sourcegraph-default-rev` | `make set-sourcegraph-default-rev` | sourcegraph-mcp wrapper |
 | `/devbox/slack-webhook-url` | `make upload-slack-webhook` | ao wrapper + `init-ao-config` |
-| `/devbox/linear-api-key` | `make upload-linear-api-token` | ao wrapper + `init-ao-config` |
+| `/devbox/linear-api-key` | `make upload-linear-api-token` | ao wrapper + `init-ao-config` + devbox-linear-mcp |
+| `/devbox/linear-default-team-key` | `make upload-linear-default-team` | devbox-linear-mcp (lets tool calls omit `team=`) |
+| `/devbox/aws-access-key-id` | `make upload-aws-credentials` | `[profile pablo]` credential_process on the box |
+| `/devbox/aws-secret-access-key` | `make upload-aws-credentials` | `[profile pablo]` credential_process on the box |
 
 ---
 
