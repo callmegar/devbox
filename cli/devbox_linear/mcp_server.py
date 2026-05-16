@@ -34,6 +34,7 @@ Missing API key doesn't crash the server — each tool returns a structured
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 from typing import Any
@@ -267,14 +268,19 @@ _ISSUE_WITH_BLOCKERS = _ISSUE_CORE_FIELDS + """
 # ---------- catch wrapper ----------------------------------------------------
 
 def _wrap(fn):
-    """Decorator: convert LinearError into a structured tool response."""
+    """Decorator: convert LinearError into a structured tool response.
+
+    Uses functools.wraps so FastMCP's inspect.signature() follows __wrapped__
+    back to the real function — without it, the wrapper's (*args, **kwargs)
+    signature leaks into the generated tool schema, causing callers to send
+    `args`/`kwargs` parameters that the real function doesn't accept.
+    """
+    @functools.wraps(fn)
     def wrapped(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
         except LinearError as e:
             return {"error": str(e)}
-    wrapped.__name__ = fn.__name__
-    wrapped.__doc__ = fn.__doc__
     return wrapped
 
 
@@ -348,7 +354,7 @@ def create_issue(
         blocker_uuid = _resolve_issue_uuid(blocker_ref)
         rel = _client().query(
             """mutation($a:String!,$b:String!){
-              issueRelationCreate(input:{issueId:$a, relatedIssueId:$b, type:"blocks"}){
+              issueRelationCreate(input:{issueId:$a, relatedIssueId:$b, type:blocks}){
                 success
                 issueRelation{id}
               }
@@ -376,7 +382,7 @@ def link_blocks(blocker: str, blocked: str) -> dict[str, Any]:
     b = _resolve_issue_uuid(blocked)
     data = _client().query(
         """mutation($a:String!,$b:String!){
-          issueRelationCreate(input:{issueId:$a, relatedIssueId:$b, type:"blocks"}){
+          issueRelationCreate(input:{issueId:$a, relatedIssueId:$b, type:blocks}){
             success
             issueRelation{id type}
           }
