@@ -253,15 +253,21 @@ write_files:
       . /opt/devbox/env 2>/dev/null || true
       _ao_ssm() {
         aws ssm get-parameter --name "$1" --with-decryption \
-          --region "${AWS_REGION:-us-east-2}" \
+          --region "$${AWS_REGION:-us-east-2}" \
           --query Parameter.Value --output text 2>/dev/null || echo ""
       }
-      # Slack incoming-webhook URL (referenced as ${SLACK_WEBHOOK_URL} in
+      # Slack incoming-webhook URL (referenced as $${SLACK_WEBHOOK_URL} in
       # agent-orchestrator.yaml's notifiers block).
-      : "${SLACK_WEBHOOK_URL:=$(_ao_ssm /devbox/slack-webhook-url)}"
+      : "$${SLACK_WEBHOOK_URL:=$(_ao_ssm /devbox/slack-webhook-url)}"
       # Linear personal API key (used by ao's `tracker: { plugin: linear, ... }`).
-      : "${LINEAR_API_KEY:=$(_ao_ssm /devbox/linear-api-key)}"
-      export SLACK_WEBHOOK_URL LINEAR_API_KEY
+      : "$${LINEAR_API_KEY:=$(_ao_ssm /devbox/linear-api-key)}"
+      # GitLab PAT — exported as both GITLAB_TOKEN (glab default) and GL_TOKEN
+      # (legacy) so spawned worker sessions can `glab mr create` without setup.
+      # To create/update MRs the token needs scope `api` (read_api alone is not
+      # enough). Re-upload with broader scopes via `make upload-gitlab-api-token`.
+      : "$${GITLAB_TOKEN:=$(_ao_ssm /devbox/gitlab-api-token)}"
+      : "$${GL_TOKEN:=$GITLAB_TOKEN}"
+      export SLACK_WEBHOOK_URL LINEAR_API_KEY GITLAB_TOKEN GL_TOKEN
       exec /usr/bin/ao "$@"
       WRAPPER_EOF
       chmod 0755 /usr/local/bin/ao

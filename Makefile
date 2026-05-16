@@ -134,11 +134,11 @@ set-sourcegraph-default-rev: ## Pin sourcegraph-mcp searches to a default branch
 	fi
 
 .PHONY: upload-gitlab-api-token
-upload-gitlab-api-token: ## Upload a GitLab personal access token to SSM (TOKEN=... or interactive prompt). Needs scopes: read_api, read_repository.
+upload-gitlab-api-token: ## Upload a GitLab personal access token to SSM (TOKEN=... or interactive prompt). Min scopes: read_api+read_repository for indexing; api for `glab mr create`.
 	@if [ -n "$(TOKEN)" ]; then \
 	  T="$(TOKEN)"; \
 	else \
-	  read -p "GitLab personal access token (read_api + read_repository): " -s T; echo; \
+	  read -p "GitLab personal access token (scope: api for MR creation, else read_api+read_repository): " -s T; echo; \
 	fi; \
 	if [ -z "$$T" ]; then echo "no token provided"; exit 1; fi; \
 	aws ssm put-parameter --name /devbox/gitlab-api-token --type SecureString --overwrite \
