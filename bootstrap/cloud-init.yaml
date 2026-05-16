@@ -347,6 +347,25 @@ write_files:
     content: |
       ${indent(6, setup_ssh_keys_script)}
 
+  # -- File: tmux session bootstrapper ----------------------------------------
+  # Creates a 4-pane `devbox` tmux session on first SSH login (match shell,
+  # live ao status, ao log tail, general shell). Body lives in
+  # bootstrap/scripts/setup-tmux.sh.
+  - path: /opt/devbox/scripts/setup-tmux.sh
+    permissions: "0755"
+    content: |
+      ${indent(6, setup_tmux_script)}
+
+  # -- File: SSH-login auto-attach hook ---------------------------------------
+  # Sourced by login shells via /etc/profile.d. On interactive SSH (with no
+  # tmux session present) it bootstraps the devbox session and attaches.
+  # Opt out per-session with DEVBOX_NO_TMUX=1. Body lives in
+  # bootstrap/scripts/devbox-tmux-attach.sh.
+  - path: /etc/profile.d/devbox-tmux.sh
+    permissions: "0644"
+    content: |
+      ${indent(6, devbox_tmux_attach_script)}
+
   # -- Step: restic restore (best-effort, first boot) -------------------------
   - path: /opt/devbox/scripts/restic-restore.sh
     permissions: "0755"

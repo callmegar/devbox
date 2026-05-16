@@ -52,6 +52,8 @@ locals {
     aws_region                = var.aws_region
     setup_ssh_keys_script     = file("${path.module}/../bootstrap/scripts/setup-ssh-keys.sh")
     install_closedloop_script = file("${path.module}/../bootstrap/scripts/install-closedloop.sh")
+    setup_tmux_script         = file("${path.module}/../bootstrap/scripts/setup-tmux.sh")
+    devbox_tmux_attach_script = file("${path.module}/../bootstrap/scripts/devbox-tmux-attach.sh")
   })
 }
 
