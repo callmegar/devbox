@@ -256,7 +256,7 @@ _ISSUE_CORE_FIELDS = """
 """
 
 _ISSUE_WITH_BLOCKERS = _ISSUE_CORE_FIELDS + """
-  inverseRelations(filter:{type:{eq:\"blocks\"}}){
+  inverseRelations{
     nodes{
       id type
       issue{id identifier title state{name type}}
@@ -404,19 +404,26 @@ def unlink_blocks(blocker: str, blocked: str) -> dict[str, Any]:
     """Remove an existing 'blocker blocks blocked' relation between two issues."""
     a = _resolve_issue_uuid(blocker)
     b = _resolve_issue_uuid(blocked)
-    # Find the relation id by walking blocker's relations.
+    # Find the relation id by walking blocker's relations. The server-side
+    # `filter:{type:...}` arg is silently dropped by Linear (returns null
+    # data), so fetch all relation types and narrow to "blocks" in Python.
     data = _client().query(
         """query($a:String!){
           issue(id:$a){
-            relations(filter:{type:{eq:"blocks"}}){
-              nodes{id relatedIssue{id}}
+            relations{
+              nodes{id type relatedIssue{id}}
             }
           }
         }""",
         {"a": a},
     )
     rels = (((data.get("issue") or {}).get("relations") or {}).get("nodes") or [])
-    target = next((r for r in rels if (r.get("relatedIssue") or {}).get("id") == b), None)
+    target = next(
+        (r for r in rels
+         if r.get("type") == "blocks"
+         and (r.get("relatedIssue") or {}).get("id") == b),
+        None,
+    )
     if not target:
         raise LinearError(f"no blocks relation found from {blocker} to {blocked}")
     deleted = _client().query(
@@ -451,6 +458,10 @@ def get_issue(ref: str) -> dict[str, Any]:
     summary["description"] = issue.get("description")
     blockers = []
     for rel in ((issue.get("inverseRelations") or {}).get("nodes") or []):
+        # Linear silently null's any filter arg on inverseRelations, so we
+        # fetch all relation types and discard non-"blocks" client-side.
+        if rel.get("type") != "blocks":
+            continue
         b = rel.get("issue") or {}
         b_state = b.get("state") or {}
         blockers.append({
@@ -556,7 +567,10 @@ def list_ready_issues(
         rels = ((n.get("inverseRelations") or {}).get("nodes") or [])
         open_blockers = [
             r for r in rels
-            if ((r.get("issue") or {}).get("state") or {}).get("type") not in {"completed", "canceled"}
+            # Linear silently null's any filter arg on inverseRelations, so we
+            # narrow to "blocks" relations client-side before the state check.
+            if r.get("type") == "blocks"
+            and ((r.get("issue") or {}).get("state") or {}).get("type") not in {"completed", "canceled"}
         ]
         summary = _issue_summary(n)
         if open_blockers:
