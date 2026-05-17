@@ -1,0 +1,9 @@
+{
+  "name": "devbox-local-review",
+  "description": "Multi-persona code review of uncommitted local changes. Spawns six reviewer specialists (architecture, code-cleanliness, code-quality, security, test, ux) in parallel against the worktree diff and emits a consolidated Critical/Warning report.",
+  "version": "0.1.0",
+  "author": {"name": "devbox"},
+  "license": "MIT",
+  "keywords": ["code-review", "git", "security", "architecture", "tests", "ux"],
+  "commands": "./commands/"
+}

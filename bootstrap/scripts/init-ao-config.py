@@ -17,10 +17,18 @@ idempotently merges into ao's config files:
       tracker: { plugin: linear, teamId: <UUID> }
       orchestratorRules: <managed block teaching the orchestrator to use the
                           devbox Linear MCP for epic-driven fan-out>
+      agentRulesFile: .devbox-agent-rules.md  # pointer to the devbox-managed
+                                              # done-gate rules (alongside any
+                                              # user-written `agentRules`)
+
+  <repo>/.devbox-agent-rules.md              # devbox-managed worker rules
+      (Currently: invoke /local-review:local-review before reporting
+       completed; treat Critical findings as blocking.)
 
 Round-trips via ruamel.yaml so comments and existing key order survive. The
-`tracker` and `orchestratorRules` keys are devbox-managed and get overwritten
-on each run; everything else (agentRules, etc.) is preserved.
+`tracker`, `orchestratorRules`, and `agentRulesFile` keys are devbox-managed
+and get overwritten on each run; the `agentRules` field and everything else
+is preserved.
 
 Usage (on the box, invoked by `make init-ao-config`):
   init-ao-config.py --team ABC
@@ -77,6 +85,40 @@ Refuse to fan-out and ask for confirmation if:
 
 If the user references a single Linear issue (no parent context), treat it as
 a normal `ao spawn` — no fan-out.
+"""
+
+# Devbox-managed worker rules, written to `<repo>/.devbox-agent-rules.md` and
+# referenced via the per-project `agentRulesFile`. ao merges this content into
+# every worker's system prompt alongside any user-written `agentRules`. The
+# gate forces a fresh-context multi-persona review pass before workers report
+# `completed`, catching architecture / security / test / UX regressions
+# before they reach the MR.
+DEVBOX_AGENT_RULES_FILE_NAME = ".devbox-agent-rules.md"
+DEVBOX_AGENT_RULES = """\
+# Devbox-managed worker rules
+
+This file is overwritten by `make init-ao-config` on every run. Hand-written
+rules belong in `agent-orchestrator.yaml`'s `agentRules` field — that field is
+preserved and merged alongside this one.
+
+## Local-review done-gate
+
+Before reporting `completed` (and before pushing the branch or creating an
+MR), invoke `/local-review:local-review` on your uncommitted changes.
+
+- Treat every **Critical** finding as blocking. Fix it, commit the fix,
+  then re-run `/local-review:local-review`.
+- Treat every **Warning** finding as advisory. Address what you agree with;
+  justify what you skip in your `ao report completed` message.
+- If the same Critical persists across two re-runs of the reviewer, stop
+  looping and surface it explicitly in your completion report:
+  "blocked by reviewer Critical: <description> at <file:line>; needs human
+  judgment." Do not push the branch in that state.
+
+The reviewer is a panel of six fresh-context Sonnet specialists
+(architecture, code-cleanliness, code-quality, security, test, ux) with
+Haiku confidence-scoring on top — trust its Critical findings. Its purpose
+is to catch the failure modes a single-pass implementer typically misses.
 """
 
 
@@ -183,13 +225,29 @@ def merge_project_config(yaml: YAML, repo_path: str, team_uuid: str) -> bool:
     Devbox owns these keys (overwritten each run):
       tracker            — plugin + teamId
       orchestratorRules  — the epic-driven fan-out playbook (ORCHESTRATOR_RULES)
-    Everything else (agentRules, etc.) is preserved as-is.
+      agentRulesFile     — pointer to the devbox-managed worker rules
+    Everything else (agentRules, etc.) is preserved as-is. The devbox-managed
+    rules file at <repo>/.devbox-agent-rules.md is also (re)written on every
+    run — ao merges it into every worker's prompt alongside agentRules.
     """
     yaml_path = Path(repo_path) / "agent-orchestrator.yaml"
+    rules_path = Path(repo_path) / DEVBOX_AGENT_RULES_FILE_NAME
     desired_tracker = {"plugin": "linear", "teamId": team_uuid}
 
+    # Always refresh the rules file content — it's devbox-managed and small.
+    rules_changed = (
+        not rules_path.exists()
+        or rules_path.read_text() != DEVBOX_AGENT_RULES
+    )
+    if rules_changed:
+        rules_path.write_text(DEVBOX_AGENT_RULES)
+
     if not yaml_path.exists():
-        cfg = {"tracker": desired_tracker, "orchestratorRules": ORCHESTRATOR_RULES}
+        cfg = {
+            "tracker": desired_tracker,
+            "agentRulesFile": DEVBOX_AGENT_RULES_FILE_NAME,
+            "orchestratorRules": ORCHESTRATOR_RULES,
+        }
         with open(yaml_path, "w") as f:
             yaml.dump(cfg, f)
         return True
@@ -210,9 +268,12 @@ def merge_project_config(yaml: YAML, repo_path: str, team_uuid: str) -> bool:
         cfg = dict(projects[only_key])
         migrated = True
 
-    changed = migrated
+    changed = migrated or rules_changed
     if dict(cfg.get("tracker") or {}) != desired_tracker:
         cfg["tracker"] = desired_tracker
+        changed = True
+    if cfg.get("agentRulesFile") != DEVBOX_AGENT_RULES_FILE_NAME:
+        cfg["agentRulesFile"] = DEVBOX_AGENT_RULES_FILE_NAME
         changed = True
     if cfg.get("orchestratorRules") != ORCHESTRATOR_RULES:
         cfg["orchestratorRules"] = ORCHESTRATOR_RULES

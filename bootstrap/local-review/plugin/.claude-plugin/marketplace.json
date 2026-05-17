@@ -1,0 +1,12 @@
+{
+  "name": "devbox-local",
+  "description": "Local marketplace exposing devbox-internal plugins (vendored from the devbox repo).",
+  "owner": {"name": "devbox"},
+  "plugins": [
+    {
+      "name": "devbox-local-review",
+      "source": "./",
+      "description": "Multi-persona local code review with file-based reviewer specialists."
+    }
+  ]
+}

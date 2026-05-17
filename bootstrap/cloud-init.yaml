@@ -58,7 +58,7 @@ write_files:
       # setup-user runs early (right after mount-data) so the ~/.local, ~/.config
       # etc. symlinks point at the data volume BEFORE any tool installs into them
       # (e.g. uv writing to ~/.local/bin). Reordering this is load-bearing.
-      STEPS=(mount-data setup-user install-aws-profile install-docker install-node install-python install-tofu install-restic install-claude-code install-closedloop install-ao install-sourcegraph setup-ssh-keys restic-restore enable-services)
+      STEPS=(mount-data setup-user install-aws-profile install-docker install-node install-python install-tofu install-restic install-claude-code install-closedloop install-local-review install-ao install-sourcegraph setup-ssh-keys restic-restore enable-services)
       log() { echo "[setup $(date -Iseconds)] $*"; }
       run_step() {
         local step="$1"
@@ -232,6 +232,17 @@ write_files:
     permissions: "0755"
     content: |
       ${indent(6, install_closedloop_script)}
+
+  # -- Step: install devbox-local-review plugin --------------------------------
+  # Multi-persona code reviewer invoked as `/local-review:local-review`. Pulls
+  # the plugin + persona files from this devbox repo's main branch at install
+  # time (and on every re-run, so `make sync-local-review` from the laptop
+  # refreshes it without redeploying cloud-init). Body lives in
+  # bootstrap/scripts/install-local-review.sh.
+  - path: /opt/devbox/scripts/install-local-review.sh
+    permissions: "0755"
+    content: |
+      ${indent(6, install_local_review_script)}
 
   # -- Step: install agent-orchestrator (`ao`) ---------------------------------
   # Spawns parallel Claude Code workers, each in its own git worktree, and

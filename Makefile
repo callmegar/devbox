@@ -223,6 +223,20 @@ sync-ssh-keys: ## Push latest setup-ssh-keys.sh to the box and run it
 	aws ssm wait command-executed --region $(AWS_REGION) --command-id $$CMD --instance-id $(INSTANCE_ID); \
 	aws ssm get-command-invocation --region $(AWS_REGION) --command-id $$CMD --instance-id $(INSTANCE_ID) --query StandardOutputContent --output text
 
+.PHONY: sync-local-review
+sync-local-review: SCRIPT = bootstrap/scripts/install-local-review.sh
+sync-local-review: REMOTE = /opt/devbox/scripts/install-local-review.sh
+sync-local-review: ## Push latest install-local-review.sh and run it (re-fetches plugin + personas from this repo's main branch)
+	@[ -f $(SCRIPT) ] || (echo "$(SCRIPT) not found"; exit 1)
+	@B64=$$(base64 < $(SCRIPT) | tr -d '\n'); \
+	JSON=$$(printf '{"commands":["echo %s | base64 -d | sudo tee %s > /dev/null","sudo chmod 0755 %s","sudo %s"]}' "$$B64" "$(REMOTE)" "$(REMOTE)" "$(REMOTE)"); \
+	CMD=$$(aws ssm send-command --region $(AWS_REGION) --instance-ids $(INSTANCE_ID) \
+		--document-name AWS-RunShellScript --parameters "$$JSON" \
+		--query Command.CommandId --output text); \
+	echo "command: $$CMD"; \
+	aws ssm wait command-executed --region $(AWS_REGION) --command-id $$CMD --instance-id $(INSTANCE_ID); \
+	aws ssm get-command-invocation --region $(AWS_REGION) --command-id $$CMD --instance-id $(INSTANCE_ID) --query StandardOutputContent --output text
+
 .PHONY: sync-mcp-config
 sync-mcp-config: SCRIPT = bootstrap/scripts/sync-mcp-config.py
 sync-mcp-config: REMOTE = /opt/devbox/scripts/sync-mcp-config.py
